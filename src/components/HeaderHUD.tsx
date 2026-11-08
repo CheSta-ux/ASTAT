@@ -47,7 +47,9 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }
                 <div className="text-xs sm:text-sm font-extrabold text-slate-100 tracking-wider flex items-center gap-1.5 leading-tight">
                   ASTAT
                   <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-emerald-950 border border-emerald-600 text-emerald-300">
-                    ONLINE
+                    TESTnet
+                  </span>
+                  <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-[#1e2b1f] border border-[#3b6d47] text-emerald-300">
                   </span>
                 </div>
               </div>
