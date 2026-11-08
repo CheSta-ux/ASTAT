@@ -570,7 +570,32 @@ export const MapView: React.FC<MapViewProps> = ({
               )}
             </div>
 
+           <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+              {isAtCamp ? (
+                <span className="bg-emerald-950/40 px-2 py-1 rounded border border-emerald-700/60 text-emerald-300">
+                  <span>Безпечна зона</span>
+                </span>
+              ) : currentSearchStatus.isDepleted ? (
+                <span className="bg-rose-950/60 px-2 py-1 rounded border border-rose-600/80 text-rose-300 flex items-center gap-1 font-mono font-bold animate-pulse">
+                  <Clock className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>Виснажено (Кулдаун: {formatCooldownTimer(currentSearchStatus.cooldownRemainingMs)})</span>
+                </span>
+              ) : (
+                <span className="bg-[#17231a] px-2 py-1 rounded border border-[#263b2c] text-[#a4baa8] flex items-center gap-1">
+                  <span>Пошуків залишилось:</span>
+                  <b className="text-emerald-400">{currentSearchStatus.searchesLeft}/4</b>
+                </span>
+              )}
+
+              {currentSectorInfo.radHazard > 0.25 && !isAtCamp && (
+                <span className="bg-amber-950/40 px-2 py-1 rounded border border-amber-800/60 text-amber-300">
+                  <span>Радіація: {Math.round(currentSectorInfo.radHazard * 100)}%</span>
+                </span>
+              )}
+            </div>
+
             <div className="mt-4 space-y-2">
+              {/* Кнопка 1: Огляд місцевості */}
               <button
                 onClick={onSearch}
                 disabled={Boolean(expedition) || isAtCamp || currentSearchStatus.isDepleted}
@@ -587,21 +612,25 @@ export const MapView: React.FC<MapViewProps> = ({
               </button>
 
               <div className="grid grid-cols-2 gap-2">
+                {/* Кнопка 2: Відпочинок */}
                 <button
                   onClick={onRest}
                   disabled={Boolean(expedition) || !isAtCamp}
                   className="py-2 px-2 bg-[#17261d] hover:bg-[#22382b] disabled:bg-[#131c15] disabled:text-[#425246] border border-[#284732] disabled:border-[#1d2920] text-xs font-semibold rounded text-slate-200 transition flex items-center justify-center gap-1.5"
                 >
-                  <Bed className="w-3.5 h-3.5" /> Відпочити
+                  <Bed className="w-3.5 h-3.5 shrink-0" />
+                  <span>Відпочити</span>
                 </button>
 
+                {/* Кнопка 3: Перенесення табору */}
                 <button
-                onClick={onRelocateCamp}
-                disabled={Boolean(expedition) || isAtCamp}
-                className="py-2 px-2 bg-[#17261d] hover:bg-[#22382b] disabled:bg-[#131c15] disabled:text-[#425246] border border-[#284732] disabled:border-[#1d2920] text-xs font-semibold rounded text-emerald-300 transition flex items-center justify-center gap-1.5"
-              >
-                <Tent className="w-3.5 h-3.5" /> Перенести (100 плат)
-              </button>
+                  onClick={onRelocateCamp}
+                  disabled={Boolean(expedition) || isAtCamp}
+                  className="py-2 px-2 bg-[#17261d] hover:bg-[#22382b] disabled:bg-[#131c15] disabled:text-[#425246] border border-[#284732] disabled:border-[#1d2920] text-xs font-semibold rounded text-emerald-300 transition flex items-center justify-center gap-1.5"
+                >
+                  <Tent className="w-3.5 h-3.5 shrink-0" />
+                  <span>Перенести (100 плат)</span>
+                </button>
               </div>
             </div>
           </div>
