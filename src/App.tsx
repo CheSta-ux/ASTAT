@@ -1,6 +1,6 @@
 import './App.css';
 import { useState, useRef, useEffect } from 'react';
-import { Compass, Backpack, Radio, Crosshair, Database, Footprints, AlertTriangle } from 'lucide-react';
+import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle } from 'lucide-react';
 
 import type { Coordinates, ExpeditionState, InventoryItem, PlayerStats, RadioMessage, TabType } from './types/game';
 import { calculateRealisticTravelTime, calculateHaversineDistanceMeters } from './utils/coordinates';
@@ -22,7 +22,6 @@ import { MapView } from './components/MapView';
 import { InventoryView } from './components/InventoryView';
 import { RadioView } from './components/RadioView';
 import { ProfileView } from './components/ProfileView';
-import { ArchitectureView } from './components/ArchitectureView';
 import { AfkModal } from './components/AfkModal';
 import { OnboardingModal } from './components/OnboardingModal';
 import { supabase } from './lib/supabase';
@@ -435,32 +434,19 @@ export default function App() {
     }
 
     const senderName = player.callsign || player.name;
-    const timestamp = Date.now();
 
-    // 1. Оптимістичне оновлення локального стану
-    setRadioMessages((prev) => [
-      {
-        id: timestamp,
-        createdAt: timestamp,
-        sender: senderName,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        text: msg,
-        type: type || 'local',
-        target: target
-      },
-      ...prev
-    ]);
-
-    // 2. Відправка до Supabase для синхронізації з іншими гравцями
+    // Відправляємо в базу: Realtime-канал миттєво додасть його в чат без дублів
     try {
-      await supabase.from('radio_messages').insert({
+      const { error } = await supabase.from('radio_messages').insert({
         sender: senderName,
         text: msg,
         type: type || 'local',
         target: target
       });
+      if (error) throw error;
     } catch (err) {
-      console.warn('Supabase insert warning:', err);
+      console.warn('Помилка відправки в ефір:', err);
+      notify('Помилка передачі сигналу в ефір', 'danger');
     }
   };
 
@@ -562,14 +548,6 @@ export default function App() {
           >
             <Crosshair className="w-4 h-4 shrink-0" /> Особиста справа
           </button>
-          <button
-            onClick={() => setActiveTab('architecture')}
-            className={`flex items-center gap-2 px-3 py-2 rounded font-semibold whitespace-nowrap shrink-0 transition ${
-              activeTab === 'architecture' ? 'bg-[#1b2b20] text-yellow-300 border border-[#6b623b]' : 'text-[#998f7d] hover:text-[#d6cebf]'
-            }`}
-          >
-            <Database className="w-4 h-4 shrink-0" /> Supabase та Next.js DDL
-          </button>
         </div>
 
         {activeTab === 'map' && (
@@ -601,7 +579,6 @@ export default function App() {
           />
         )}
         {activeTab === 'profile' && <ProfileView player={player} campCoords={campCoords} />}
-        {activeTab === 'architecture' && <ArchitectureView />}
       </main>
 
       {showAfkModal && expedition && <AfkModal expedition={expedition} onClose={() => setShowAfkModal(false)} />}
@@ -609,28 +586,58 @@ export default function App() {
       {!hasCompletedOnboarding && (
         <OnboardingModal
           onNotify={notify}
-          onComplete={(data) => {
+          onComplete={async (data) => {
             const isWater = Boolean(data.isWaterSpawn);
 
-            setPlayer((prev) => ({
-              ...prev,
+            const updatedPlayer: PlayerStats = {
+              ...player,
               name: data.callsign,
               callsign: data.callsign,
               citizenship: data.citizenship,
               specialization: data.specialization,
               aggressorReason: data.aggressorReason,
               astatCoins: 0,
-              hp: isWater ? 35 : prev.hp,
-              hunger: isWater ? 25 : prev.hunger,
+              hp: isWater ? 35 : player.hp,
+              hunger: isWater ? 25 : player.hunger,
               conditions: data.isZombified 
-                ? Array.from(new Set([...prev.conditions, 'zombified'])) 
-                : prev.conditions
-            }));
+                ? Array.from(new Set([...player.conditions, 'zombified'])) 
+                : player.conditions
+            };
+
+            setPlayer(updatedPlayer);
             setCoords(data.startCoords);
             setCampCoords(data.startCoords);
 
             setHasCompletedOnboarding(true);
             setIsBooting(true);
+
+            // --- ЗАПИС ГРАВЦЯ В SUPABASE ---
+            try {
+              // Отримуємо або створюємо унікальний ID сесії гравця в браузері
+              let localPlayerId = localStorage.getItem('astat_player_id');
+              if (!localPlayerId) {
+                localPlayerId = crypto.randomUUID();
+                localStorage.setItem('astat_player_id', localPlayerId);
+              }
+
+              await supabase.from('players').upsert({
+                id: localPlayerId,
+                callsign: data.callsign,
+                citizenship: data.citizenship,
+                specialization: data.specialization,
+                hp: updatedPlayer.hp,
+                hunger: updatedPlayer.hunger,
+                microchips: 0,
+                lat: data.startCoords.lat,
+                lng: data.startCoords.lng,
+                camp_lat: data.startCoords.lat,
+                camp_lng: data.startCoords.lng,
+                conditions: updatedPlayer.conditions,
+                updated_at: new Date().toISOString()
+              });
+            } catch (err) {
+              console.warn('Не вдалося зберегти гравця в Supabase:', err);
+            }
 
             if (isWater) {
               notify(`🌊 ДЕСАНТУВАННЯ У ВОДУ! Штраф: -50 HP, ситість 25%!`, 'danger');
