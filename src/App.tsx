@@ -405,33 +405,11 @@ export default function App() {
 
     const roll = Math.random();
 
-    if (roll < 0.35) {
-      let chipsFound = Math.floor(Math.random() * 12) + 6;
-      if (player.conditions.includes('zombified')) {
-        chipsFound = Math.max(1, Math.round(chipsFound * 0.2));
-        notify(`💀 Зомбованість (-80%): знайдено лише +${chipsFound} мікросхем!`, 'danger');
-      } else {
-        notify(`📟 Знайдено блок електроніки: +${chipsFound} мікросхем!`, 'success');
-      }
-      nextPlayer.astatCoins += chipsFound;
-
-      const microIdx = nextInventory.findIndex((i) => i.id === 'microchip');
-      if (microIdx >= 0) {
-        nextInventory[microIdx] = { ...nextInventory[microIdx], count: nextInventory[microIdx].count + chipsFound };
-      } else {
-        nextInventory.push({
-          id: 'microchip',
-          name: 'Мікросхема',
-          type: 'material',
-          count: chipsFound,
-          value: 1,
-          desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
-        });
-      }
-    } else if (roll < 0.55) {
+    // 1. Знахідка предмету (55% шанс знайти щось із бази Supabase)
+    if (roll < 0.55) {
       const foundItem = getRandomLoot();
 
-      // Якщо випала мікросхема — оновлюємо також гаманець валюти
+      // Якщо випала мікросхема з бази — синхронізуємо лічильник валюти
       if (foundItem.id === 'microchip') {
         nextPlayer.astatCoins += foundItem.count;
       }
@@ -453,7 +431,7 @@ export default function App() {
       const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
       notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
     } 
-    // 2. Пастка або арматура
+    // 2. Пастка або арматура (25% шанс отримати поранення)
     else if (roll < 0.80) {
       nextPlayer.hp = Math.max(10, player.hp - 18);
       if (!nextPlayer.conditions.includes('bleeding')) {
@@ -461,7 +439,7 @@ export default function App() {
       }
       notify('🩸 Пастка! Отримано 18 шкоди та кровотечу!', 'danger');
     } 
-    // 3. Порожньо
+    // 3. Порожній сектор (20% шанс нічого не знайти)
     else {
       notify('Ретельний огляд нічого не дав, лише іржа та порожнеча.', 'info');
     }
