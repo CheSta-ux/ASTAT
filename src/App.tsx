@@ -428,9 +428,10 @@ export default function App() {
           desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
         });
       }
-    } else if (roll < 0.65) {
+    } else if (roll < 0.55) {
       const foundItem = getRandomLoot();
 
+      // Якщо випала мікросхема — оновлюємо також гаманець валюти
       if (foundItem.id === 'microchip') {
         nextPlayer.astatCoins += foundItem.count;
       }
@@ -451,13 +452,17 @@ export default function App() {
 
       const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
       notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
-    } else if (roll < 0.82) {
+    } 
+    // 2. Пастка або арматура
+    else if (roll < 0.80) {
       nextPlayer.hp = Math.max(10, player.hp - 18);
       if (!nextPlayer.conditions.includes('bleeding')) {
         nextPlayer.conditions = [...nextPlayer.conditions, 'bleeding'];
       }
-      notify('🩸 Пастка або арматура! Отримано 18 шкоди та кровотечу!', 'danger');
-    } else {
+      notify('🩸 Пастка! Отримано 18 шкоди та кровотечу!', 'danger');
+    } 
+    // 3. Порожньо
+    else {
       notify('Ретельний огляд нічого не дав, лише іржа та порожнеча.', 'info');
     }
 
