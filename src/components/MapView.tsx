@@ -544,7 +544,7 @@ export const MapView: React.FC<MapViewProps> = ({
               <span>{isAtCamp ? 'Укріплений базовий табір' : currentSectorInfo.name}</span>
             </h3>
             <p className="text-xs text-[#8ea393] mt-2 italic border-l-2 border-[#2b4432] pl-2.5">
-              {isAtCamp ? 'Ваш безпечний притулок. Вогнище тліє, периметр заміновано.' : currentSectorInfo.desc}
+              {isAtCamp ? 'Ваш безпечний притулок. Вогнище тліє, периметр під контролем.' : currentSectorInfo.desc}
             </p>
 
             <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
@@ -576,12 +576,14 @@ export const MapView: React.FC<MapViewProps> = ({
                 disabled={Boolean(expedition) || isAtCamp || currentSearchStatus.isDepleted}
                 className="w-full py-2.5 px-3 bg-[#1e3825] hover:bg-[#2b5135] disabled:bg-[#17221a] disabled:text-[#55695a] border border-[#3b6e47] disabled:border-[#223126] text-emerald-100 font-bold text-xs rounded transition flex items-center justify-center gap-2 shadow"
               >
-                <Eye className="w-4 h-4" />
-                {isAtCamp
-                  ? 'У таборі немає луту'
-                  : currentSearchStatus.isDepleted
-                  ? `Виснажено (кулдаун: ${formatCooldownTimer(currentSearchStatus.cooldownRemainingMs)})`
-                  : 'Оглянути місцевість (-4% ситості)'}
+                <Eye className="w-4 h-4 shrink-0" />
+                <span>
+                  {isAtCamp
+                    ? 'У таборі немає луту'
+                    : currentSearchStatus.isDepleted
+                    ? `Виснажено (кулдаун: ${formatCooldownTimer(currentSearchStatus.cooldownRemainingMs)})`
+                    : 'Оглянути місцевість (-4% ситості)'}
+                </span>
               </button>
 
               <div className="grid grid-cols-2 gap-2">
