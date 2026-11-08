@@ -1,5 +1,5 @@
 import './App.css';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle } from 'lucide-react';
 
 import type { Coordinates, ExpeditionState, InventoryItem, PlayerStats, RadioMessage, TabType } from './types/game';
@@ -50,7 +50,7 @@ export default function App() {
 
   const [sectorSearches, setSectorSearches] = useState<Record<string, SectorSearchRecord>>(loadSectorSearchHistory);
 
-  // Гравець зі стартовим балансом = 0 мікросхем
+  // Гравець
   const [player, setPlayer] = useState<PlayerStats>({
     name: 'Виживший-33',
     callsign: 'Привид Полісся',
@@ -78,7 +78,123 @@ export default function App() {
     { id: 3, createdAt: Date.now(), sender: 'Бродяга_99', time: '11:58', text: 'Хто біля закинутого порту? Залишив схрон під іржавим краном.', type: 'local', target: '51.408-30.063' }
   ]);
 
-  // Завантаження історії та підписка на Realtime-повідомлення через Supabase
+  // Захисний реф від дублювання однакових сповіщень
+  const lastNotificationRef = useRef<{ msg: string; time: number }>({ msg: '', time: 0 });
+
+  const notify = useCallback((msg: string, type: 'info' | 'warn' | 'danger' | 'success' = 'info') => {
+    const now = Date.now();
+    if (lastNotificationRef.current.msg === msg && now - lastNotificationRef.current.time < 1500) {
+      return;
+    }
+    lastNotificationRef.current = { msg, time: now };
+
+    const id = now + Math.random();
+    setNotifications((prev) => [...prev.slice(-2), { id, msg, type }]);
+    setTimeout(() => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    }, 4500);
+  }, []);
+
+  // --- СИНХРОНІЗАЦІЯ СТАНУ З SUPABASE ---
+  const syncGameState = useCallback(async (
+    overridePlayer?: PlayerStats,
+    overrideInventory?: InventoryItem[],
+    overrideCoords?: Coordinates,
+    overrideCamp?: Coordinates
+  ) => {
+    const localPlayerId = localStorage.getItem('astat_player_id');
+    if (!localPlayerId) return;
+
+    const curPlayer = overridePlayer || player;
+    const curInv = overrideInventory || inventory;
+    const curCoords = overrideCoords || coords;
+    const curCamp = overrideCamp || campCoords;
+
+    const payload: any = {
+      id: localPlayerId,
+      callsign: curPlayer.callsign || curPlayer.name,
+      citizenship: curPlayer.citizenship,
+      specialization: curPlayer.specialization,
+      hp: curPlayer.hp,
+      hunger: curPlayer.hunger,
+      microchips: curPlayer.astatCoins,
+      lat: curCoords.lat,
+      lng: curCoords.lng,
+      camp_lat: curCamp.lat,
+      camp_lng: curCamp.lng,
+      conditions: curPlayer.conditions,
+      inventory: curInv,
+      updated_at: new Date().toISOString()
+    };
+
+    try {
+      const { error } = await supabase.from('players').upsert(payload);
+      if (error) {
+        // Якщо колонки inventory ще немає у схемі Supabase, зберігаємо без неї
+        if (error.message?.includes('inventory') || error.code === 'PGRST204') {
+          delete payload.inventory;
+          await supabase.from('players').upsert(payload);
+        } else {
+          console.warn('Supabase sync warning:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('Network sync error:', err);
+    }
+  }, [player, inventory, coords, campCoords]);
+
+  // --- ВІДНОВЛЕННЯ ДАНИХ ПРИ ЗАПУСКУ / F5 ---
+  useEffect(() => {
+    const localPlayerId = localStorage.getItem('astat_player_id');
+    if (!localPlayerId) return;
+
+    supabase
+      .from('players')
+      .select('*')
+      .eq('id', localPlayerId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setPlayer((prev) => ({
+            ...prev,
+            name: data.callsign || 'Виживший',
+            callsign: data.callsign || 'Виживший',
+            citizenship: data.citizenship || 'Україна 🇺🇦',
+            specialization: data.specialization || 'scout',
+            hp: data.hp ?? 100,
+            maxHp: 100,
+            hunger: data.hunger ?? 100,
+            maxHunger: 100,
+            astatCoins: data.microchips ?? 0,
+            searchesLeft: 4,
+            conditions: data.conditions || ['comfort'],
+            exploredCount: 0
+          }));
+
+          if (data.lat && data.lng) {
+            setCoords({ x: 0, y: 0, lat: data.lat, lng: data.lng });
+          }
+          if (data.camp_lat && data.camp_lng) {
+            setCampCoords({ x: 0, y: 0, lat: data.camp_lat, lng: data.camp_lng });
+          }
+          if (data.inventory && Array.isArray(data.inventory) && data.inventory.length > 0) {
+            setInventory(data.inventory);
+          }
+          setHasCompletedOnboarding(true);
+        }
+      });
+  }, []);
+
+  // Періодичне автозбереження кожні 20 секунд
+  useEffect(() => {
+    if (!hasCompletedOnboarding) return;
+    const interval = setInterval(() => {
+      syncGameState();
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [hasCompletedOnboarding, syncGameState]);
+
+  // Завантаження радіоефіру та Realtime
   useEffect(() => {
     supabase
       .from('radio_messages')
@@ -131,7 +247,7 @@ export default function App() {
     };
   }, []);
 
-  // Очищення повідомлень, старіших за 60 секунд
+  // Очищення локальних повідомлень, старіших за 60 секунд
   useEffect(() => {
     const timer = setInterval(() => {
       const cutoff = Date.now() - 60000;
@@ -140,50 +256,42 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Захисний реф від дублювання однакових сповіщень
-  const lastNotificationRef = useRef<{ msg: string; time: number }>({ msg: '', time: 0 });
-
-  const notify = (msg: string, type: 'info' | 'warn' | 'danger' | 'success' = 'info') => {
-    const now = Date.now();
-    if (lastNotificationRef.current.msg === msg && now - lastNotificationRef.current.time < 1500) {
-      return;
-    }
-    lastNotificationRef.current = { msg, time: now };
-
-    const id = now + Math.random();
-    setNotifications((prev) => [...prev.slice(-2), { id, msg, type }]);
-    setTimeout(() => {
-      setNotifications((prev) => prev.filter((n) => n.id !== id));
-    }, 4500);
-  };
-
-  // Методи для синхронізації мікросхем
+  // Синхронізація мікросхем
   const addMicrochips = (amount: number) => {
-    setPlayer((prev) => ({ ...prev, astatCoins: prev.astatCoins + amount }));
-    setInventory((prev) => {
-      const exists = prev.some((i) => i.id === 'microchip');
-      if (exists) {
-        return prev.map((i) => (i.id === 'microchip' ? { ...i, count: i.count + amount } : i));
-      }
-      return [
-        ...prev,
-        {
-          id: 'microchip',
-          name: 'Мікросхема',
-          type: 'material',
-          count: amount,
-          value: 1,
-          desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
-        }
-      ];
-    });
+    const nextCoins = player.astatCoins + amount;
+    const nextPlayer: PlayerStats = { ...player, astatCoins: nextCoins };
+    setPlayer(nextPlayer);
+
+    const exists = inventory.some((i) => i.id === 'microchip');
+    const nextInv = exists
+      ? inventory.map((i) => (i.id === 'microchip' ? { ...i, count: i.count + amount } : i))
+      : [
+          ...inventory,
+          {
+            id: 'microchip',
+            name: 'Мікросхема',
+            type: 'material' as const,
+            count: amount,
+            value: 1,
+            desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
+          }
+        ];
+
+    setInventory(nextInv);
+    syncGameState(nextPlayer, nextInv);
   };
 
   const spendMicrochips = (amount: number) => {
-    setPlayer((prev) => ({ ...prev, astatCoins: Math.max(0, prev.astatCoins - amount) }));
-    setInventory((prev) =>
-      prev.map((i) => (i.id === 'microchip' ? { ...i, count: Math.max(0, i.count - amount) } : i))
+    const nextCoins = Math.max(0, player.astatCoins - amount);
+    const nextPlayer: PlayerStats = { ...player, astatCoins: nextCoins };
+    setPlayer(nextPlayer);
+
+    const nextInv = inventory.map((i) =>
+      i.id === 'microchip' ? { ...i, count: Math.max(0, i.count - amount) } : i
     );
+
+    setInventory(nextInv);
+    syncGameState(nextPlayer, nextInv);
   };
 
   const handleExpeditionComplete = (expData: any) => {
@@ -204,6 +312,8 @@ export default function App() {
     setSelectedTarget(null);
     setExpedition(null);
 
+    let updatedPlayer: PlayerStats = { ...player };
+
     setPlayer((prev) => {
       let newHp = prev.hp;
       const newHunger = Math.max(0, prev.hunger - expData.hungerCost);
@@ -222,7 +332,7 @@ export default function App() {
         conditions = conditions.filter((c) => c !== 'comfort');
       }
 
-      return {
+      updatedPlayer = {
         ...prev,
         hp: newHp,
         hunger: newHunger,
@@ -230,7 +340,10 @@ export default function App() {
         conditions,
         exploredCount: prev.exploredCount + 1
       };
+      return updatedPlayer;
     });
+
+    syncGameState(updatedPlayer, undefined, destCoords);
 
     if (searchStatus.isDepleted) {
       notify(`Сектор: ${destSector.name}. Ресурси вичерпано (24г)!`, 'warn');
@@ -311,11 +424,9 @@ export default function App() {
     setSectorSearches(updatedHistory);
     saveSectorSearchHistory(updatedHistory);
 
-    setPlayer((prev) => ({
-      ...prev,
-      searchesLeft: nextSearchesLeft,
-      hunger: Math.max(0, prev.hunger - 4)
-    }));
+    const nextHunger = Math.max(0, player.hunger - 4);
+    let nextPlayer = { ...player, searchesLeft: nextSearchesLeft, hunger: nextHunger };
+    let nextInventory = [...inventory];
 
     const roll = Math.random();
 
@@ -323,48 +434,61 @@ export default function App() {
       let chipsFound = Math.floor(Math.random() * 12) + 6;
       if (player.conditions.includes('zombified')) {
         chipsFound = Math.max(1, Math.round(chipsFound * 0.2));
-        addMicrochips(chipsFound);
         notify(`💀 Зомбованість (-80%): знайдено лише +${chipsFound} мікросхем!`, 'danger');
       } else {
-        addMicrochips(chipsFound);
         notify(`📟 Знайдено блок електроніки: +${chipsFound} мікросхем!`, 'success');
+      }
+      nextPlayer.astatCoins += chipsFound;
+
+      const microIdx = nextInventory.findIndex((i) => i.id === 'microchip');
+      if (microIdx >= 0) {
+        nextInventory[microIdx] = { ...nextInventory[microIdx], count: nextInventory[microIdx].count + chipsFound };
+      } else {
+        nextInventory.push({
+          id: 'microchip',
+          name: 'Мікросхема',
+          type: 'material',
+          count: chipsFound,
+          value: 1,
+          desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
+        });
       }
     } else if (roll < 0.65) {
       const foundItem = getRandomLoot();
-      
+
       if (foundItem.id === 'microchip') {
-        addMicrochips(foundItem.count);
-      } else {
-        setInventory((prev) => {
-          const idx = prev.findIndex((i) => i.id === foundItem.id);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = { ...next[idx], count: next[idx].count + foundItem.count };
-            return next;
-          }
-          return [...prev, foundItem];
-        });
+        nextPlayer.astatCoins += foundItem.count;
       }
-      
+
+      const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
+      if (idx >= 0) {
+        nextInventory[idx] = { ...nextInventory[idx], count: nextInventory[idx].count + foundItem.count };
+      } else {
+        nextInventory.push(foundItem);
+      }
+
       const itemIcon =
         foundItem.id === 'microchip' ? '📟' :
         foundItem.type === 'food' ? '📦' : 
         foundItem.type.startsWith('medical') ? '🩹' : 
         foundItem.type === 'junk' ? '🗑️' : 
         foundItem.type === 'rare' ? '✨' : '⚙️';
-                       
+
       const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
       notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
     } else if (roll < 0.82) {
-      setPlayer((prev) => ({
-        ...prev,
-        hp: Math.max(10, prev.hp - 18),
-        conditions: prev.conditions.includes('bleeding') ? prev.conditions : [...prev.conditions, 'bleeding']
-      }));
+      nextPlayer.hp = Math.max(10, player.hp - 18);
+      if (!nextPlayer.conditions.includes('bleeding')) {
+        nextPlayer.conditions = [...nextPlayer.conditions, 'bleeding'];
+      }
       notify('🩸 Пастка або арматура! Отримано 18 шкоди та кровотечу!', 'danger');
     } else {
       notify('Ретельний огляд нічого не дав, лише іржа та порожнеча.', 'info');
     }
+
+    setPlayer(nextPlayer);
+    setInventory(nextInventory);
+    syncGameState(nextPlayer, nextInventory);
 
     if (nextSearchesLeft === 0) {
       notify(`Сектор зачищено! Блокування повторного огляду на 24 години.`, 'warn');
@@ -377,15 +501,21 @@ export default function App() {
       notify('Повноцінний відпочинок можливий лише в Таборі.', 'warn');
       return;
     }
-    setPlayer((prev) => ({
-      ...prev,
-      hp: prev.maxHp,
-      hunger: Math.min(prev.maxHunger, prev.hunger + 20),
-      conditions: prev.conditions
-        .filter((c) => c === 'zombified' || c === 'comfort')
-        .concat(prev.conditions.includes('comfort') ? [] : ['comfort'])
-    }));
-    notify('Ви поспали біля вогнища. Здоров’я відновлено!', 'success');
+
+    const updatedConditions = player.conditions
+      .filter((c) => c === 'zombified' || c === 'comfort')
+      .concat(player.conditions.includes('comfort') ? [] : ['comfort']);
+
+    const updatedPlayer: PlayerStats = {
+      ...player,
+      hp: player.maxHp,
+      hunger: Math.min(player.maxHunger, player.hunger + 20),
+      conditions: updatedConditions
+    };
+
+    setPlayer(updatedPlayer);
+    notify('Ви поспали біля вогнища. Здоров’я та сили відновлено!', 'success');
+    syncGameState(updatedPlayer);
   };
 
   const handleRelocateCamp = () => {
@@ -398,30 +528,37 @@ export default function App() {
       notify('Для перенесення потрібно 100 мікросхем!', 'danger');
       return;
     }
+
     spendMicrochips(100);
     setCampCoords({ ...coords });
     notify(`Табір перенесено на нові GPS: ${coords.lat.toFixed(5)}° N! (-100 мікросхем)`, 'success');
+    syncGameState(undefined, undefined, undefined, coords);
   };
 
   const handleUseItem = (item: InventoryItem) => {
     if (item.count <= 0) return;
 
+    let updatedPlayer = { ...player };
+
     if (item.type === 'food') {
-      setPlayer((prev) => ({ ...prev, hunger: Math.min(prev.maxHunger, prev.hunger + item.value) }));
+      updatedPlayer.hunger = Math.min(player.maxHunger, player.hunger + item.value);
       notify(`Вжито ${item.name}. Ситість +${item.value}%`, 'success');
     } else if (item.type === 'medical_bleed') {
-      setPlayer((prev) => ({
-        ...prev,
-        hp: Math.min(prev.maxHp, prev.hp + item.value),
-        conditions: prev.conditions.filter((c) => c !== 'bleeding')
-      }));
+      updatedPlayer.hp = Math.min(player.maxHp, player.hp + item.value);
+      updatedPlayer.conditions = player.conditions.filter((c) => c !== 'bleeding');
       notify(`Бинт накладено. Кровотечу зупинено, +${item.value} HP.`, 'success');
     } else if (item.type === 'medical_rad') {
-      setPlayer((prev) => ({ ...prev, conditions: prev.conditions.filter((c) => c !== 'radiation') }));
+      updatedPlayer.conditions = player.conditions.filter((c) => c !== 'radiation');
       notify('Антирад нейтралізував радіацію!', 'success');
     }
 
-    setInventory((prev) => prev.map((i) => (i.id === item.id ? { ...i, count: i.count - 1 } : i)));
+    const nextInventory = inventory
+      .map((i) => (i.id === item.id ? { ...i, count: i.count - 1 } : i))
+      .filter((i) => i.count > 0 || i.id === 'microchip');
+
+    setPlayer(updatedPlayer);
+    setInventory(nextInventory);
+    syncGameState(updatedPlayer, nextInventory);
   };
 
   const handleSendMessage = async (text: string, type: 'local' | 'frequency', target: string) => {
@@ -435,7 +572,6 @@ export default function App() {
 
     const senderName = player.callsign || player.name;
 
-    // Відправляємо в базу: Realtime-канал миттєво додасть його в чат без дублів
     try {
       const { error } = await supabase.from('radio_messages').insert({
         sender: senderName,
@@ -604,16 +740,18 @@ export default function App() {
                 : player.conditions
             };
 
+            const initialInv = [...INITIAL_AWAKENING_INVENTORY];
+
             setPlayer(updatedPlayer);
             setCoords(data.startCoords);
             setCampCoords(data.startCoords);
+            setInventory(initialInv);
 
             setHasCompletedOnboarding(true);
             setIsBooting(true);
 
-            // --- ЗАПИС ГРАВЦЯ В SUPABASE ---
+            // Первинне збереження профілю та предметів у Supabase
             try {
-              // Отримуємо або створюємо унікальний ID сесії гравця в браузері
               let localPlayerId = localStorage.getItem('astat_player_id');
               if (!localPlayerId) {
                 localPlayerId = crypto.randomUUID();
@@ -633,6 +771,7 @@ export default function App() {
                 camp_lat: data.startCoords.lat,
                 camp_lng: data.startCoords.lng,
                 conditions: updatedPlayer.conditions,
+                inventory: initialInv,
                 updated_at: new Date().toISOString()
               });
             } catch (err) {
