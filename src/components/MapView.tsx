@@ -550,29 +550,6 @@ export const MapView: React.FC<MapViewProps> = ({
             <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
               {isAtCamp ? (
                 <span className="bg-emerald-950/40 px-2 py-1 rounded border border-emerald-700/60 text-emerald-300">
-                  Безпечна зона
-                </span>
-              ) : currentSearchStatus.isDepleted ? (
-                <span className="bg-rose-950/60 px-2 py-1 rounded border border-rose-600/80 text-rose-300 flex items-center gap-1 font-mono font-bold animate-pulse">
-                  <Clock className="w-3.5 h-3.5 text-rose-400" />
-                  Виснажено (Кулдаун: {formatCooldownTimer(currentSearchStatus.cooldownRemainingMs)})
-                </span>
-              ) : (
-                <span className="bg-[#17231a] px-2 py-1 rounded border border-[#263b2c] text-[#a4baa8]">
-                  Пошуків залишилось: <b className="text-emerald-400">{currentSearchStatus.searchesLeft}/4</b>
-                </span>
-              )}
-
-              {currentSectorInfo.radHazard > 0.25 && !isAtCamp && (
-                <span className="bg-amber-950/40 px-2 py-1 rounded border border-amber-800/60 text-amber-300">
-                  Радіація: {Math.round(currentSectorInfo.radHazard * 100)}%
-                </span>
-              )}
-            </div>
-
-           <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-              {isAtCamp ? (
-                <span className="bg-emerald-950/40 px-2 py-1 rounded border border-emerald-700/60 text-emerald-300">
                   <span>Безпечна зона</span>
                 </span>
               ) : currentSearchStatus.isDepleted ? (
