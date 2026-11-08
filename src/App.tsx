@@ -256,31 +256,6 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Синхронізація мікросхем
-  const addMicrochips = (amount: number) => {
-    const nextCoins = player.astatCoins + amount;
-    const nextPlayer: PlayerStats = { ...player, astatCoins: nextCoins };
-    setPlayer(nextPlayer);
-
-    const exists = inventory.some((i) => i.id === 'microchip');
-    const nextInv = exists
-      ? inventory.map((i) => (i.id === 'microchip' ? { ...i, count: i.count + amount } : i))
-      : [
-          ...inventory,
-          {
-            id: 'microchip',
-            name: 'Мікросхема',
-            type: 'material' as const,
-            count: amount,
-            value: 1,
-            desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
-          }
-        ];
-
-    setInventory(nextInv);
-    syncGameState(nextPlayer, nextInv);
-  };
-
   const spendMicrochips = (amount: number) => {
     const nextCoins = Math.max(0, player.astatCoins - amount);
     const nextPlayer: PlayerStats = { ...player, astatCoins: nextCoins };
