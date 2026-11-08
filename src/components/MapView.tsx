@@ -428,7 +428,7 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
 
         <div className="mt-2 pt-2 border-t border-[#1a291f] flex items-center justify-between text-[11px] text-[#718a78] z-10 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
-          <span>* Тактичний георадар: облік виснаження секторів (24 години)</span>
+          <span>* Тактичний георадар</span>
           <span>Огляд: 500×500 м</span>
         </div>
       </div>

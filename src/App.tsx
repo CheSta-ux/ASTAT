@@ -403,16 +403,11 @@ export default function App() {
     let nextPlayer = { ...player, searchesLeft: nextSearchesLeft, hunger: nextHunger };
     let nextInventory = [...inventory];
 
+    // --- 1. РОЗРАХУНОК ЗНАХІДКИ ПРЕДМЕТА (55% лут, 25% пастка, 20% нічого) ---
     const roll = Math.random();
 
-    // 1. Знахідка предмету (55% шанс знайти щось із бази Supabase)
     if (roll < 0.55) {
       const foundItem = getRandomLoot();
-
-      // Якщо випала мікросхема з бази — синхронізуємо лічильник валюти
-      if (foundItem.id === 'microchip') {
-        nextPlayer.astatCoins += foundItem.count;
-      }
 
       const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
       if (idx >= 0) {
@@ -422,7 +417,6 @@ export default function App() {
       }
 
       const itemIcon =
-        foundItem.id === 'microchip' ? '📟' :
         foundItem.type === 'food' ? '📦' : 
         foundItem.type.startsWith('medical') ? '🩹' : 
         foundItem.type === 'junk' ? '🗑️' : 
@@ -431,7 +425,6 @@ export default function App() {
       const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
       notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
     } 
-    // 2. Пастка або арматура (25% шанс отримати поранення)
     else if (roll < 0.80) {
       nextPlayer.hp = Math.max(10, player.hp - 18);
       if (!nextPlayer.conditions.includes('bleeding')) {
@@ -439,9 +432,37 @@ export default function App() {
       }
       notify('🩸 Пастка! Отримано 18 шкоди та кровотечу!', 'danger');
     } 
-    // 3. Порожній сектор (20% шанс нічого не знайти)
     else {
       notify('Ретельний огляд нічого не дав, лише іржа та порожнеча.', 'info');
+    }
+
+    // --- 2. ОСОБЛИВИЙ ДРОП ВАЛЮТИ (ІЗОЛЬОВАНИЙ КИДОК) ---
+    // Базовий шанс: у лісі/полі 3%, у промислових зонах та руїнах — 15%
+    const currentSectorKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
+    const isTechZone = !currentSectorKey.includes('forest') && !currentSectorKey.includes('field'); 
+    const chipChance = isTechZone ? 0.15 : 0.03; // Налаштовуйте цей відсоток тут
+
+    if (Math.random() < chipChance) {
+      const foundChips = 1; // Строго 1 штука
+      nextPlayer.astatCoins += foundChips;
+
+      const microIdx = nextInventory.findIndex((i) => i.id === 'microchip');
+      if (microIdx >= 0) {
+        nextInventory[microIdx] = { ...nextInventory[microIdx], count: nextInventory[microIdx].count + foundChips };
+      } else {
+        nextInventory.push({
+          id: 'microchip',
+          name: 'Мікросхема',
+          type: 'material',
+          count: foundChips,
+          value: 1,
+          desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
+        });
+      }
+
+      setTimeout(() => {
+        notify(`📟 Серед уламків витягнуто вцілілу плату: +${foundChips} мікросхему!`, 'success');
+      }, 350);
     }
 
     setPlayer(nextPlayer);
