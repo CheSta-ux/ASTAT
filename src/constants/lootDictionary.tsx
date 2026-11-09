@@ -72,6 +72,5 @@ export const getRandomLoot = (): InventoryItem => {
 export const INITIAL_AWAKENING_INVENTORY: InventoryItem[] = [
   { id: 'ration', name: 'Армійський сухпай', type: 'food', count: 3, value: 35, desc: 'Стандартний армійський пайок.' },
   { id: 'bandage', name: 'Гемостатичний бинт', type: 'medical_bleed', count: 2, value: 20, desc: 'Зупиняє кровотечу і повертає HP.' },
-  { id: 'antirad', name: 'Ампула "Астат-Блок"', type: 'medical_rad', count: 1, value: 0, desc: 'Нейтралізує гострий радіаційний синдром.' },
-  { id: 'microchip', name: 'Мікросхема', type: 'material', count: 0, value: 1, desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.' }
+  { id: 'antirad', name: 'Ампула "Астат-Блок"', type: 'medical_rad', count: 1, value: 0, desc: 'Нейтралізує гострий радіаційний синдром.' }
 ];

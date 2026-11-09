@@ -260,13 +260,7 @@ export default function App() {
     const nextCoins = Math.max(0, player.astatCoins - amount);
     const nextPlayer: PlayerStats = { ...player, astatCoins: nextCoins };
     setPlayer(nextPlayer);
-
-    const nextInv = inventory.map((i) =>
-      i.id === 'microchip' ? { ...i, count: Math.max(0, i.count - amount) } : i
-    );
-
-    setInventory(nextInv);
-    syncGameState(nextPlayer, nextInv);
+    syncGameState(nextPlayer);
   };
 
   const handleExpeditionComplete = (expData: any) => {
@@ -410,30 +404,32 @@ export default function App() {
     const roll = Math.random();
 
     if (roll < 0.60) {
-      // Предмет обирається виключно з таблиці loot_items за вагою drop_weight
       const foundItem = getRandomLoot();
 
-      // Якщо з пулу Supabase випала мікросхема — синхронізуємо баланс
+      // Якщо з бази Supabase випала мікросхема — поповнюємо числовий баланс
       if (foundItem.id === 'microchip') {
-        nextPlayer.astatCoins += foundItem.count;
+        const chipsCount = foundItem.count || 1;
+        nextPlayer.astatCoins += chipsCount;
+        notify(`📟 Знайдено кремнієву плату: +${chipsCount} мікросхему!`, 'success');
+      } 
+      // Фізичні предмети додаємо в інвентар
+      else {
+        const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
+        if (idx >= 0) {
+          nextInventory[idx] = { ...nextInventory[idx], count: nextInventory[idx].count + foundItem.count };
+        } else {
+          nextInventory.push(foundItem);
+        }
+
+        const itemIcon =
+          foundItem.type === 'food' ? '📦' : 
+          foundItem.type.startsWith('medical') ? '🩹' : 
+          foundItem.type === 'junk' ? '🗑️' : 
+          foundItem.type === 'rare' ? '✨' : '⚙️';
+
+        const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
+        notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
       }
-
-      const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
-      if (idx >= 0) {
-        nextInventory[idx] = { ...nextInventory[idx], count: nextInventory[idx].count + foundItem.count };
-      } else {
-        nextInventory.push(foundItem);
-      }
-
-      const itemIcon =
-        foundItem.id === 'microchip' ? '📟' :
-        foundItem.type === 'food' ? '📦' : 
-        foundItem.type.startsWith('medical') ? '🩹' : 
-        foundItem.type === 'junk' ? '🗑️' : 
-        foundItem.type === 'rare' ? '✨' : '⚙️';
-
-      const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
-      notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
     } else if (roll < 0.80) {
       nextPlayer.hp = Math.max(10, player.hp - 18);
       if (!nextPlayer.conditions.includes('bleeding')) {
@@ -512,7 +508,7 @@ export default function App() {
 
     const nextInventory = inventory
       .map((i) => (i.id === item.id ? { ...i, count: i.count - 1 } : i))
-      .filter((i) => i.count > 0 || i.id === 'microchip');
+      .filter((i) => i.count > 0);
 
     setPlayer(updatedPlayer);
     setInventory(nextInventory);
