@@ -403,34 +403,17 @@ export default function App() {
     let nextPlayer = { ...player, searchesLeft: nextSearchesLeft, hunger: nextHunger };
     let nextInventory = [...inventory];
 
-    // Єдиний кидок кубика від 0.0 до 1.0 (100%)
+    // Єдиний чесний розподіл подій обшуку:
+    // 60% — знахідка луту з бази Supabase
+    // 20% — поранення / пастка
+    // 20% — сектор порожній
     const roll = Math.random();
 
-    // 1. РІДКІСНА ВАЛЮТА: 8% шанс знайти 1 мікросхему (0.00 .. 0.08)
-    if (roll < 0.08) {
-      const foundChips = 1;
-      nextPlayer.astatCoins += foundChips;
-
-      const microIdx = nextInventory.findIndex((i) => i.id === 'microchip');
-      if (microIdx >= 0) {
-        nextInventory[microIdx] = { ...nextInventory[microIdx], count: nextInventory[microIdx].count + foundChips };
-      } else {
-        nextInventory.push({
-          id: 'microchip',
-          name: 'Мікросхема',
-          type: 'material',
-          count: foundChips,
-          value: 1,
-          desc: 'Вціліла кремнієва плата логіки. Універсальна тверда валюта та основа технологій.'
-        });
-      }
-      notify(`📟 Знайдено кремнієву плату: +${foundChips} мікросхему!`, 'success');
-    }
-    // 2. ПРИПАСИ ТА ЛУТ: 47% шанс знайти предмет із Supabase (0.08 .. 0.55)
-    else if (roll < 0.55) {
+    if (roll < 0.60) {
+      // Предмет обирається виключно з таблиці loot_items за вагою drop_weight
       const foundItem = getRandomLoot();
 
-      // Якщо в базі ще не вимкнено мікросхему — оновлюємо баланс, інакше додаємо предмет
+      // Якщо з пулу Supabase випала мікросхема — синхронізуємо баланс
       if (foundItem.id === 'microchip') {
         nextPlayer.astatCoins += foundItem.count;
       }
@@ -451,17 +434,13 @@ export default function App() {
 
       const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
       notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
-    }
-    // 3. НЕБЕЗПЕКА: 20% шанс натрапити на пастку (0.55 .. 0.75)
-    else if (roll < 0.75) {
+    } else if (roll < 0.80) {
       nextPlayer.hp = Math.max(10, player.hp - 18);
       if (!nextPlayer.conditions.includes('bleeding')) {
         nextPlayer.conditions = [...nextPlayer.conditions, 'bleeding'];
       }
       notify('🩸 Пастка! Отримано 18 шкоди та кровотечу!', 'danger');
-    }
-    // 4. ПОРОЖНЬО: 25% шанс нічого не знайти (0.75 .. 1.00)
-    else {
+    } else {
       notify('Ретельний огляд нічого не дав, лише іржа та порожнеча.', 'info');
     }
 
