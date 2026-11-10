@@ -206,6 +206,53 @@ export default function App() {
     return () => clearInterval(interval);
   }, [hasCompletedOnboarding, syncGameState]);
 
+  // Жива синхронізація гравця з Supabase (Realtime)
+  useEffect(() => {
+    const localPlayerId = localStorage.getItem('astat_player_id');
+    if (!localPlayerId) return;
+
+    const channel = supabase
+      .channel(`player-realtime-${localPlayerId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'players',
+          filter: `id=eq.${localPlayerId}`
+        },
+        (payload) => {
+          const data = payload.new;
+          if (!data) return;
+
+          setPlayer((prev) => ({
+            ...prev,
+            hp: data.hp ?? prev.hp,
+            hunger: data.hunger ?? prev.hunger,
+            astatCoins: data.microchips ?? prev.astatCoins,
+            conditions: data.conditions || prev.conditions,
+            specialization: data.specialization || prev.specialization,
+            callsign: data.callsign || prev.callsign
+          }));
+
+          if (data.inventory && Array.isArray(data.inventory)) {
+            setInventory(data.inventory);
+          }
+          if (data.explored_sectors && Array.isArray(data.explored_sectors)) {
+            setExploredSectors(data.explored_sectors);
+          }
+          if (data.camp_lat && data.camp_lng) {
+            setCampCoords({ x: 0, y: 0, lat: data.camp_lat, lng: data.camp_lng });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   useEffect(() => {
     supabase
       .from('radio_messages')
