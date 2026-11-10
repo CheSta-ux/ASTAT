@@ -807,10 +807,15 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleCallForHelp}
-                  className="flex-1 md:flex-initial px-3.5 py-2 bg-[#2c1d12] hover:bg-[#422917] border border-amber-500 text-amber-200 text-xs font-bold rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
+                  disabled={sosCooldown > 0}
+                  className={`flex-1 md:flex-initial px-3.5 py-2 border rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95 ${
+                    sosCooldown > 0
+                      ? 'bg-[#18130e] border-[#382618] text-[#7d5f47] cursor-not-allowed opacity-75'
+                      : 'bg-[#2c1d12] hover:bg-[#422917] border-amber-500 text-amber-200'
+                  }`}
                 >
-                  <Radio className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
-                  <span>Гукати допомогу (SOS)</span>
+                  <Radio className={`w-3.5 h-3.5 shrink-0 ${sosCooldown > 0 ? 'text-[#7d5f47]' : 'text-amber-400 animate-pulse'}`} />
+                  <span>{sosCooldown > 0 ? `Крик на кулдауні (${sosCooldown}с)` : 'Гукати допомогу (SOS)'}</span>
                 </button>
 
                 <button
