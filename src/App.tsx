@@ -352,23 +352,10 @@ export default function App() {
 
     const coordsStr = `${coords.lat.toFixed(4)}°, ${coords.lng.toFixed(4)}°`;
     const localSectorTarget = `${coords.lat.toFixed(3)}-${coords.lng.toFixed(3)}`;
-    const senderName = player.callsign || player.name;
 
     const screamText = `🚨 [КРИК ПРО ДОПОМОГУ]: "Я поранений в секторі ${coordsStr}! Допоможіть хто-небудь!"`;
 
-    // Миттєве відображення в поточному вікні чату
-    const optimisticMsg: RadioMessage = {
-      id: Date.now(),
-      createdAt: Date.now(),
-      sender: senderName,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      text: screamText,
-      type: 'local',
-      target: localSectorTarget
-    };
-    setRadioMessages((prev) => [optimisticMsg, ...prev]);
-
-    // Відправка в базу даних для інших виживанців поруч
+    // Просто відправляємо в базу, Realtime миттєво підхопить і виведе його на екран 1 раз
     await handleSendMessage(screamText, 'local', localSectorTarget);
 
     // Запуск обмеження на 60 секунд
