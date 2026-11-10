@@ -603,9 +603,9 @@ export default function App() {
         </div>
       )}
 
-      {/* Головний контейнер термінала */}
+      {/* Головний контейнер термінала верхні вкладки */}
       <main className="max-w-7xl mx-auto w-full p-3 md:p-5 flex-1 flex flex-col gap-4">
-        <div className="flex items-center gap-1.5 border-b border-[#243328] pb-2 overflow-x-auto no-scrollbar text-xs">
+        <div className="hidden md:flex items-center gap-1.5 border-b border-[#243328] pb-2 overflow-x-auto no-scrollbar text-xs">
           <button
             onClick={() => setActiveTab('map')}
             className={`flex items-center gap-2 px-3 py-2 rounded font-semibold whitespace-nowrap shrink-0 transition ${
@@ -762,6 +762,48 @@ export default function App() {
           <span>Статус зв'язку: АКТИВНИЙ</span>
         </div>
       </footer>
+      {/* Мобільна фіксована док-панель навігації (завжди під пальцем) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070e0a]/95 backdrop-blur-lg border-t border-[#1e3825] px-2 py-1.5 flex items-center justify-around shadow-[0_-8px_20px_rgba(0,0,0,0.8)]">
+        <button
+          onClick={() => setActiveTab('map')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
+            activeTab === 'map' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Compass className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Карта</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('inventory')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
+            activeTab === 'inventory' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Backpack className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Рюкзак</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('radio')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
+            activeTab === 'radio' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Radio className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Радіо</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
+            activeTab === 'profile' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Crosshair className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Профіль</span>
+        </button>
+      </nav>
     </div>
   );
 }

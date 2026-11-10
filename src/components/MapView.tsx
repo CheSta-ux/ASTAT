@@ -431,6 +431,71 @@ export const MapView: React.FC<MapViewProps> = ({
           <span>* Тактичний георадар</span>
           <span>Огляд: 500×500 м</span>
         </div>
+
+        {/* ================= МОБІЛЬНА ПЛАШКА ШВИДКОЇ ДІЇ (БЕЗ СКРОЛІНГУ) ================= */}
+        <div className="lg:hidden mt-2 z-20">
+          {!expedition && selectedTarget && !isSelectedCurrent && routeEstimates && (
+            <div className="p-2.5 bg-[#121c15] border border-amber-500/80 rounded-lg shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-bottom-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 truncate">
+                  <span className="text-amber-400 font-bold text-xs truncate">{selectedTarget.data.name}</span>
+                  <span className="text-[10px] text-[#8ea894] font-mono shrink-0">({routeEstimates.meters}м)</span>
+                </div>
+                <div className="text-[10px] text-[#718d78] font-mono mt-0.5">
+                  Час: <b className="text-emerald-300">{routeEstimates.seconds}с</b> • Ситість: <b className="text-amber-400">-{routeEstimates.hungerCost}%</b>
+                </div>
+              </div>
+
+              {selectedTarget.data.isWaterBlocked ? (
+                <span className="text-[10px] text-cyan-400 font-bold px-2 py-1 bg-cyan-950 border border-cyan-700 rounded">
+                  Вода 🌊
+                </span>
+              ) : selectedTargetSearchStatus?.isDepleted ? (
+                <span className="text-[10px] text-rose-400 font-bold px-2 py-1 bg-rose-950 border border-rose-800 rounded">
+                  Зачищено 🔒
+                </span>
+              ) : (
+                <button
+                  onClick={() =>
+                    onStartExpedition({
+                      x: selectedTarget.lat,
+                      y: selectedTarget.lng,
+                      lat: selectedTarget.lat,
+                      lng: selectedTarget.lng
+                    })
+                  }
+                  className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-md shadow-lg flex items-center gap-1.5 shrink-0 active:scale-95 transition"
+                >
+                  <Footprints className="w-3.5 h-3.5 shrink-0" />
+                  <span>Марш</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Швидкі дії в поточному секторі на мобільному */}
+          {!expedition && (!selectedTarget || isSelectedCurrent) && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={onSearch}
+                disabled={isAtCamp || currentSearchStatus.isDepleted}
+                className="py-2 px-2 bg-[#1b3321] hover:bg-[#25462e] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#376342] disabled:border-[#1d2a1f] text-emerald-100 font-bold text-xs rounded flex items-center justify-center gap-1.5 shadow"
+              >
+                <Eye className="w-3.5 h-3.5 shrink-0" />
+                <span>{isAtCamp ? 'У таборі' : currentSearchStatus.isDepleted ? 'Виснажено' : 'Огляд (-4%)'}</span>
+              </button>
+
+              <button
+                onClick={onRest}
+                disabled={!isAtCamp}
+                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2a1f] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5"
+              >
+                <Bed className="w-3.5 h-3.5 shrink-0" />
+                <span>Відпочити</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Права панель деталей */}
