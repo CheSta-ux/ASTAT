@@ -38,41 +38,38 @@ interface MapViewProps {
 
 const SectorTacticalIcon: React.FC<{ icon: string; className?: string }> = ({ icon, className = 'w-5 h-5' }) => {
   switch (icon) {
-    case 'camp':
-      return <Tent className={`${className} text-emerald-400`} />;
-    case 'building':
-      return <Building2 className={`${className} text-slate-300`} />;
-    case 'factory':
-      return <Factory className={`${className} text-amber-400`} />;
-    case 'highway':
-      return <Route className={`${className} text-slate-400`} />;
-    case 'waves':
-      return <Waves className={`${className} text-cyan-400`} />;
-    case 'anchor':
-      return <Anchor className={`${className} text-teal-400`} />;
-    case 'shallows':
-      return <Compass className={`${className} text-teal-300`} />;
-    case 'pier':
-      return <Ship className={`${className} text-teal-400`} />;
-    case 'forest':
-      return <TreePine className={`${className} text-emerald-400`} />;
-    case 'field':
-      return <Wheat className={`${className} text-yellow-400`} />;
-    case 'anomaly':
-      return <Zap className={`${className} text-rose-400 animate-pulse`} />;
-    case 'mountain':
-      return <Mountain className={`${className} text-stone-300`} />;
-    default:
-      return <MapPin className={`${className} text-slate-400`} />;
+    case 'camp': return <Tent className={`${className} text-emerald-400`} />;
+    case 'building': return <Building2 className={`${className} text-slate-300`} />;
+    case 'factory': return <Factory className={`${className} text-amber-400`} />;
+    case 'highway': return <Route className={`${className} text-slate-400`} />;
+    case 'waves': return <Waves className={`${className} text-cyan-400`} />;
+    case 'anchor': return <Anchor className={`${className} text-teal-400`} />;
+    case 'shallows': return <Compass className={`${className} text-teal-300`} />;
+    case 'pier': return <Ship className={`${className} text-teal-400`} />;
+    case 'forest': return <TreePine className={`${className} text-emerald-400`} />;
+    case 'field': return <Wheat className={`${className} text-yellow-400`} />;
+    case 'anomaly': return <Zap className={`${className} text-rose-400 animate-pulse`} />;
+    case 'mountain': return <Mountain className={`${className} text-stone-300`} />;
+    default: return <MapPin className={`${className} text-slate-400`} />;
   }
 };
 
-const lon2tile = (lon: number, zoom: number) => Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
-const lat2tile = (lat: number, zoom: number) =>
-  Math.floor(
-    ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
-      Math.pow(2, zoom)
-  );
+// Точні формули проекції Web Mercator (EPSG:3857)
+const latLngToWorldPixel = (lat: number, lng: number, zoom: number) => {
+  const n = 256 * Math.pow(2, zoom);
+  const x = ((lng + 180.0) / 360.0) * n;
+  const latRad = (lat * Math.PI) / 180.0;
+  const y = ((1.0 - Math.log(Math.tan(latRad) + 1.0 / Math.cos(latRad)) / Math.PI) / 2.0) * n;
+  return { x, y };
+};
+
+const worldPixelToLatLng = (x: number, y: number, zoom: number) => {
+  const n = 256 * Math.pow(2, zoom);
+  const lng = (x / n) * 360.0 - 180.0;
+  const latRad = Math.atan(Math.sinh(Math.PI * (1.0 - (2.0 * y) / n)));
+  const lat = (latRad * 180.0) / Math.PI;
+  return { lat, lng };
+};
 
 export const MapView: React.FC<MapViewProps> = ({
   coords,
@@ -89,14 +86,16 @@ export const MapView: React.FC<MapViewProps> = ({
   exploredSectors = [],
   onOpenAfkModal
 }) => {
-  const gridRadius = 3;
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
 
-  // Неперервне піксельне панорамування
+  // Зсув камери в пікселях
   const [panPx, setPanPx] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const [containerSize, setContainerSize] = useState({ width: 700, height: 600 });
   const isDraggingRef = useRef(false);
   const startPosRef = useRef({ x: 0, y: 0 });
   const startPanRef = useRef({ x: 0, y: 0 });
@@ -108,40 +107,71 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const centerTileX = lon2tile(coords.lng, zoom);
-  const centerTileY = lat2tile(coords.lat, zoom);
+  // Відстеження реального розміру області мапи
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateSize = () => {
+      if (containerRef.current) {
+        setContainerSize({
+          width: containerRef.current.clientWidth || 700,
+          height: containerRef.current.clientHeight || 600
+        });
+      }
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
-  const n = Math.pow(2, zoom);
-  const exactTileX = ((coords.lng + 180) / 360) * n;
-  const latRad = (coords.lat * Math.PI) / 180;
-  const exactTileY = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+  // Розрахунок координат центру камери
+  const playerWorld = useMemo(() => latLngToWorldPixel(coords.lat, coords.lng, zoom), [coords.lat, coords.lng]);
 
-  // Базове вирівнювання тайлової сітки OpenTopoMap
-  const baseShiftX = (centerTileX + 0.5 - exactTileX) * 256;
-  const baseShiftY = (centerTileY + 0.5 - exactTileY) * 256;
+  const cameraWorld = useMemo(() => ({
+    x: playerWorld.x - panPx.x,
+    y: playerWorld.y - panPx.y
+  }), [playerWorld.x, playerWorld.y, panPx.x, panPx.y]);
 
-  // Сітка тайлів 5x5 для безшовного огляду
-  const tiles = useMemo(() => {
-    const list = [];
-    for (let ty = -2; ty <= 2; ty++) {
-      for (let tx = -2; tx <= 2; tx++) {
-        list.push({
-          x: centerTileX + tx,
-          y: centerTileY + ty,
-          offsetX: tx * 256,
-          offsetY: ty * 256,
-          key: `${centerTileX + tx}-${centerTileY + ty}`
+  const cameraLatLng = useMemo(() => 
+    worldPixelToLatLng(cameraWorld.x, cameraWorld.y, zoom),
+    [cameraWorld.x, cameraWorld.y]
+  );
+
+  // Динамічний розрахунок тайлів OpenTopoMap для поточного в'юпорта
+  const visibleTiles = useMemo(() => {
+    const halfW = containerSize.width / 2;
+    const halfH = containerSize.height / 2;
+
+    const minX = cameraWorld.x - halfW - 256;
+    const maxX = cameraWorld.x + halfW + 256;
+    const minY = cameraWorld.y - halfH - 256;
+    const maxY = cameraWorld.y + halfH + 256;
+
+    const minTileX = Math.floor(minX / 256);
+    const maxTileX = Math.floor(maxX / 256);
+    const minTileY = Math.floor(minY / 256);
+    const maxTileY = Math.floor(maxY / 256);
+
+    const tiles = [];
+    for (let ty = minTileY; ty <= maxTileY; ty++) {
+      for (let tx = minTileX; tx <= maxTileX; tx++) {
+        tiles.push({
+          x: tx,
+          y: ty,
+          left: tx * 256 - cameraWorld.x + halfW,
+          top: ty * 256 - cameraWorld.y + halfH,
+          key: `${zoom}-${tx}-${ty}`
         });
       }
     }
-    return list;
-  }, [centerTileX, centerTileY]);
+    return tiles;
+  }, [cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
 
-  // Розширений список секторів (7x7) навколо гравця для вільного руху
+  // Сектори навколо гравця для розміщення маркерів
   const sectorList = useMemo(() => {
     const list = [];
-    for (let dy = gridRadius; dy >= -gridRadius; dy--) {
-      for (let dx = -gridRadius; dx <= gridRadius; dx++) {
+    for (let dy = 4; dy >= -4; dy--) {
+      for (let dx = -4; dx <= 4; dx++) {
         const geo = offsetGeoBySectors(coords.lat, coords.lng, dx, dy);
         list.push({
           dx,
@@ -198,6 +228,11 @@ export const MapView: React.FC<MapViewProps> = ({
         calculateHaversineDistanceMeters(sec.lat, sec.lng, expeditionTargetCoords.lat, expeditionTargetCoords.lng) < 50
       );
 
+      // Піксельна позиція відносно екрана
+      const secWorld = latLngToWorldPixel(sec.lat, sec.lng, zoom);
+      const screenX = secWorld.x - cameraWorld.x + containerSize.width / 2;
+      const screenY = secWorld.y - cameraWorld.y + containerSize.height / 2;
+
       return {
         ...sec,
         data: createSectorData(
@@ -215,10 +250,84 @@ export const MapView: React.FC<MapViewProps> = ({
         isFog,
         isExpeditionDestination,
         isCurrent: isCurrentPlayerPos,
-        distanceMeters: distFromPlayer
+        distanceMeters: distFromPlayer,
+        screenX,
+        screenY
       };
     });
-  }, [sectorList, coords, campCoords, exploredSet, radarMap, sectorSearches, currentTime, expeditionTargetCoords]);
+  }, [sectorList, coords, campCoords, exploredSet, radarMap, sectorSearches, currentTime, expeditionTargetCoords, cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
+
+  // ================= РЕНДЕРИНГ СПРАВЖНЬОГО ТУМАНУ ВІЙНИ (CANVAS) =================
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = containerSize.width;
+    const h = containerSize.height;
+    canvas.width = w;
+    canvas.height = h;
+
+    // 1. Повне 100% заповнення темрявою (туман покриває весь екран)
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#030704';
+    ctx.fillRect(0, 0, w, h);
+
+    // 2. Режим вирізання: відкриваємо карту там, де є розвідка
+    ctx.globalCompositeOperation = 'destination-out';
+
+    // Відкриття раніше розвіданих секторів (напівпрозоре коло пам'яті)
+    exploredSectors.forEach((key) => {
+      const [latStr, lngStr] = key.split('-');
+      const sLat = parseFloat(latStr);
+      const sLng = parseFloat(lngStr);
+      if (!isNaN(sLat) && !isNaN(sLng)) {
+        const wPos = latLngToWorldPixel(sLat, sLng, zoom);
+        const sx = wPos.x - cameraWorld.x + w / 2;
+        const sy = wPos.y - cameraWorld.y + h / 2;
+
+        if (sx > -100 && sx < w + 100 && sy > -100 && sy < h + 100) {
+          const grad = ctx.createRadialGradient(sx, sy, 10, sx, sy, 75);
+          grad.addColorStop(0, 'rgba(0,0,0,0.7)');
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 75, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    });
+
+    // Відкриття бази табору
+    const campPos = latLngToWorldPixel(campCoords.lat, campCoords.lng, zoom);
+    const campSx = campPos.x - cameraWorld.x + w / 2;
+    const campSy = campPos.y - cameraWorld.y + h / 2;
+    const campGrad = ctx.createRadialGradient(campSx, campSy, 20, campSx, campSy, 90);
+    campGrad.addColorStop(0, 'rgba(0,0,0,0.85)');
+    campGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = campGrad;
+    ctx.beginPath();
+    ctx.arc(campSx, campSy, 90, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Відкриття активного тактичного радара навколо гравця (живий радіус)
+    const pPos = latLngToWorldPixel(coords.lat, coords.lng, zoom);
+    const pSx = pPos.x - cameraWorld.x + w / 2;
+    const pSy = pPos.y - cameraWorld.y + h / 2;
+
+    const liveGrad = ctx.createRadialGradient(pSx, pSy, 50, pSx, pSy, 160);
+    liveGrad.addColorStop(0, 'rgba(0,0,0,1)');
+    liveGrad.addColorStop(0.7, 'rgba(0,0,0,0.95)');
+    liveGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = liveGrad;
+    ctx.beginPath();
+    ctx.arc(pSx, pSy, 160, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Повертаємо стандартний режим
+    ctx.globalCompositeOperation = 'source-over';
+  }, [containerSize.width, containerSize.height, cameraWorld.x, cameraWorld.y, coords.lat, coords.lng, campCoords.lat, campCoords.lng, exploredSectors]);
 
   const currentSectorKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
   const currentClassification = radarMap[currentSectorKey] || {
@@ -296,7 +405,7 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition, expeditionTargetCoords, coords, radarMap]);
 
-  // ================= НЕПЕРЕРВНИЙ ЖЕСТОВИЙ РУХ МАПИ (ПЛАВНИЙ ПАНІНГ) =================
+  // ================= НЕПЕРЕРВНИЙ ЖЕСТОВИЙ РУХ МАПИ =================
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     isDraggingRef.current = true;
@@ -320,7 +429,6 @@ export const MapView: React.FC<MapViewProps> = ({
 
     if (!hasMovedRef.current) return;
 
-    // Плавний суцільний зсув у пікселях
     setPanPx({
       x: startPanRef.current.x + deltaX,
       y: startPanRef.current.y + deltaY
@@ -344,6 +452,43 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   };
 
+  // Клік на мапу: вибір найближчого сектору або довільної точки розвідки в тумані
+  const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (hasMovedRef.current || expedition) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickScreenX = e.clientX - rect.left;
+    const clickScreenY = e.clientY - rect.top;
+
+    const clickWorldX = cameraWorld.x - containerSize.width / 2 + clickScreenX;
+    const clickWorldY = cameraWorld.y - containerSize.height / 2 + clickScreenY;
+    const clickGeo = worldPixelToLatLng(clickWorldX, clickWorldY, zoom);
+
+    // Перевіряємо, чи клікнули на відомий сектор із списку
+    let nearest = visibleSectors.find(
+      (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 36
+    );
+
+    if (nearest) {
+      setSelectedTarget({
+        lat: nearest.lat,
+        lng: nearest.lng,
+        data: nearest.data,
+        dist: nearest.distanceMeters,
+        isFog: nearest.isFog
+      });
+    } else {
+      // Клік у глибокому тумані війни: розвідка довільної точки
+      const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, clickGeo.lat, clickGeo.lng));
+      setSelectedTarget({
+        lat: Number(clickGeo.lat.toFixed(5)),
+        lng: Number(clickGeo.lng.toFixed(5)),
+        data: createSectorData(clickGeo.lat, clickGeo.lng, false, false, false, 'urban'),
+        dist,
+        isFog: true
+      });
+    }
+  };
+
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     setPanPx((prev) => ({
       x: prev.x - e.deltaX * 0.8,
@@ -351,22 +496,20 @@ export const MapView: React.FC<MapViewProps> = ({
     }));
   };
 
-  // 1 сектор 100м відповідає приблизно 76px на екрані при zoom 16
-  const CELL_SIZE_PX = 76;
   const isPanned = Math.hypot(panPx.x, panPx.y) > 20;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
-      {/* ЛІВА ПАНЕЛЬ: РОЗШИРЕНА МАПА НА ВЕСЬ ПРОСТІР */}
-      <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative min-h-[520px] lg:min-h-[640px]">
+      {/* ЛІВА ПАНЕЛЬ: ПОВНОРОЗМІРНА МАПА З CANVAS ТУМАНОМ ВІЙНИ */}
+      <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative min-h-[540px] lg:min-h-[660px]">
         
         {/* Верхня панель: GPS та База */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-2 text-xs z-20">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-2 text-xs z-30">
           <div className="flex items-center gap-1.5 text-emerald-300 font-bold bg-[#08100b]/90 px-2.5 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs">
             <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
             <span>GPS: {coords.lat.toFixed(4)}°, {coords.lng.toFixed(4)}°</span>
             {isPanned && (
-              <span className="text-amber-400 ml-1 text-[9px] font-mono">(Огляд зміщено)</span>
+              <span className="text-amber-400 ml-1 text-[9px] font-mono">(Огляд: {cameraLatLng.lat.toFixed(4)}°)</span>
             )}
           </div>
 
@@ -389,212 +532,157 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
 
-        {/* ПОВНОРОЗМІРНИЙ В'ЮПОРТ МАПИ БЕЗ ШТУЧНИХ ОБМЕЖЕНЬ */}
+        {/* ПОВНОРОЗМІРНИЙ КОНТЕЙНЕР МАПИ */}
         <div 
           ref={containerRef}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          onClick={handleMapClick}
           onWheel={handleWheel}
           className="relative w-full flex-1 rounded-lg overflow-hidden border border-[#1b2b20] bg-[#030604] shadow-inner select-none touch-none cursor-grab active:cursor-grabbing"
         >
-          {/* СУЦІЛЬНИЙ ШАР МАПИ (РУХАЄТЬСЯ НЕПЕРЕРВНО В ПІКСЕЛЯХ) */}
-          <div 
-            className="absolute inset-0 flex items-center justify-center will-change-transform"
-            style={{
-              transform: `translate3d(${panPx.x}px, ${panPx.y}px, 0)`
-            }}
-          >
-            {/* 1. Топографічний шар тайлів */}
-            <div 
-              className="absolute pointer-events-none opacity-85"
-              style={{
-                width: 5 * 256,
-                height: 5 * 256,
-                transform: `translate(${baseShiftX}px, ${baseShiftY}px)`
-              }}
-            >
-              {tiles.map((t) => (
-                <img
-                  key={t.key}
-                  src={`https://tile.opentopomap.org/${zoom}/${t.x}/${t.y}.png`}
-                  alt="topo"
-                  className="absolute w-[256px] h-[256px] object-cover filter invert hue-rotate-180 brightness-85 contrast-125 pointer-events-none"
+          {/* 1. БЕЗШОВНА ПІДКЛАДКА OPENTOPOMAP (завантажується скрізь, куди б ви не рушили) */}
+          <div className="absolute inset-0 pointer-events-none">
+            {visibleTiles.map((t) => (
+              <img
+                key={t.key}
+                src={`https://tile.opentopomap.org/${zoom}/${t.x}/${t.y}.png`}
+                alt="topo"
+                className="absolute w-[256px] h-[256px] object-cover filter invert hue-rotate-180 brightness-85 contrast-125 pointer-events-none"
+                style={{
+                  left: t.left,
+                  top: t.top
+                }}
+                loading="eager"
+                draggable={false}
+              />
+            ))}
+          </div>
+
+          {/* 2. ШАР СПРАВЖНЬОГО ТУМАНУ ВІЙНИ (Canvas Overlay) */}
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 pointer-events-none z-10 opacity-95 transition-opacity"
+          />
+
+          {/* 3. ТАКТИЧНІ МАРКЕРИ ТА СЕКТОРИ (без жодних квадратних рамок) */}
+          <div className="absolute inset-0 pointer-events-none z-20">
+            {visibleSectors.map((sector) => {
+              if (sector.isFog) return null; // У глибокому тумані маркери не світяться
+
+              const isCampSector = calculateHaversineDistanceMeters(sector.lat, sector.lng, campCoords.lat, campCoords.lng) < 50;
+              const isSelected = Boolean(
+                selectedTarget &&
+                calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 25
+              );
+              const isBlockedWater = Boolean(sector.data.isWaterBlocked);
+              const isCoastSector = !isBlockedWater && sector.data.biomeType === 'water';
+
+              const isDepleted = sector.searchState.isDepleted;
+              const searchesLeft = sector.searchState.searchesLeft;
+              const isPartiallySearched = searchesLeft < 4 && !isDepleted;
+              const isTargetOfMarch = sector.isExpeditionDestination;
+
+              const isDimmedMemory = !sector.isLiveRadar && sector.isEverExplored;
+
+              return (
+                <div
+                  key={sector.key}
                   style={{
-                    left: 2 * 256 + t.offsetX,
-                    top: 2 * 256 + t.offsetY
+                    position: 'absolute',
+                    left: sector.screenX,
+                    top: sector.screenY,
+                    transform: 'translate(-50%, -50%)'
                   }}
-                  loading="eager"
-                  draggable={false}
-                />
-              ))}
-            </div>
+                  className={`pointer-events-auto flex flex-col items-center justify-center cursor-pointer transition-transform active:scale-90 ${
+                    isDimmedMemory ? 'opacity-55 filter saturate-50' : ''
+                  }`}
+                >
+                  <div className="relative flex items-center justify-center">
+                    {sector.isCurrent && (
+                      <div className="absolute w-10 h-10 rounded-full border border-emerald-400 bg-emerald-500/15 shadow-[0_0_15px_rgba(16,185,129,0.5)] animate-pulse" />
+                    )}
 
-            {/* 2. Шар секторів та туману без квадратних рамок */}
-            <div 
-              className="absolute pointer-events-auto"
-              style={{
-                width: (gridRadius * 2 + 1) * CELL_SIZE_PX,
-                height: (gridRadius * 2 + 1) * CELL_SIZE_PX
-              }}
-            >
-              {visibleSectors.map((sector) => {
-                const isCampSector = calculateHaversineDistanceMeters(sector.lat, sector.lng, campCoords.lat, campCoords.lng) < 50;
-                const isSelected = Boolean(
-                  selectedTarget &&
-                  calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 25
-                );
-                const isBlockedWater = Boolean(sector.data.isWaterBlocked);
-                const isCoastSector = !isBlockedWater && sector.data.biomeType === 'water';
+                    {isSelected && !sector.isCurrent && (
+                      <div className="absolute w-11 h-11 rounded-full border-2 border-yellow-400 bg-yellow-400/15 shadow-[0_0_16px_rgba(250,204,21,0.7)] animate-in zoom-in-75 duration-150" />
+                    )}
 
-                const isDepleted = sector.searchState.isDepleted;
-                const searchesLeft = sector.searchState.searchesLeft;
-                const isPartiallySearched = searchesLeft < 4 && !isDepleted;
-                const isTargetOfMarch = sector.isExpeditionDestination;
+                    {isTargetOfMarch && (
+                      <div className="absolute w-10 h-10 rounded-full border border-amber-400 bg-amber-500/20 animate-ping" />
+                    )}
 
-                // Точні піксельні координати сектору відносно центру
-                const pixelLeft = (sector.dx + gridRadius) * CELL_SIZE_PX;
-                const pixelTop = (-sector.dy + gridRadius) * CELL_SIZE_PX;
-
-                // --- ТУМАН ВІЙНИ (СУЦІЛЬНИЙ, БЕЗ СІТКИ) ---
-                if (sector.isFog) {
-                  return (
-                    <div
-                      key={sector.key}
-                      onClick={() => {
-                        if (hasMovedRef.current || expedition) return;
-                        setSelectedTarget({
-                          lat: sector.lat,
-                          lng: sector.lng,
-                          data: sector.data,
-                          dist: sector.distanceMeters,
-                          isFog: true
-                        });
-                      }}
-                      style={{
-                        position: 'absolute',
-                        left: pixelLeft,
-                        top: pixelTop,
-                        width: CELL_SIZE_PX,
-                        height: CELL_SIZE_PX
-                      }}
-                      className="flex items-center justify-center cursor-pointer group bg-[#020403]/94 backdrop-blur-[2px] transition-colors"
-                    >
-                      {/* Круговий фокус вибору замість квадратних рамок */}
-                      {isSelected ? (
-                        <div className="relative flex items-center justify-center">
-                          <div className="absolute w-12 h-12 rounded-full border border-amber-400 animate-ping opacity-60" />
-                          <div className="w-10 h-10 rounded-full border border-amber-400 bg-amber-950/40 flex items-center justify-center shadow-[0_0_15px_rgba(251,191,36,0.5)]">
-                            <HelpCircle className="w-4 h-4 text-amber-300" />
-                          </div>
-                        </div>
+                    <div className="relative z-10 flex items-center justify-center p-1.5 drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">
+                      {sector.isCurrent ? (
+                        <Crosshair className="w-5 h-5 text-emerald-300 animate-spin-slow" />
                       ) : isTargetOfMarch ? (
-                        <div className="w-10 h-10 rounded-full border border-amber-400 bg-amber-950/50 flex items-center justify-center animate-bounce">
-                          <Footprints className="w-4 h-4 text-amber-300" />
-                        </div>
+                        <Footprints className="w-5 h-5 text-amber-300 animate-bounce" />
+                      ) : isCampSector ? (
+                        <Tent className="w-5 h-5 text-emerald-400" />
                       ) : (
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-900/30 group-hover:bg-emerald-500/60 transition-colors" />
+                        <SectorTacticalIcon icon={sector.data.icon} className="w-5 h-5" />
                       )}
                     </div>
-                  );
-                }
 
-                // --- РОЗВІДАНИЙ СЕКТОР (КРУГОВІ ТАКТИЧНІ МІТКИ) ---
-                const isDimmedMemory = !sector.isLiveRadar && sector.isEverExplored;
+                    {isDepleted && (
+                      <span className="absolute -top-1 -right-1 text-rose-400 bg-black/90 rounded-full p-0.5 shadow">
+                        <Lock className="w-2.5 h-2.5" />
+                      </span>
+                    )}
+                    {isPartiallySearched && (
+                      <span className="absolute -top-1.5 -left-1 text-[7px] text-amber-300 font-mono font-bold px-1 rounded-full bg-black/90 border border-amber-600/80">
+                        {searchesLeft}
+                      </span>
+                    )}
+                    {isBlockedWater && <span className="absolute -bottom-1 -left-1 text-[8px]">🌊</span>}
+                    {isCoastSector && <span className="absolute -bottom-1 -right-1 text-[8px]">⚓</span>}
+                  </div>
 
+                  <span className={`text-[8px] font-mono font-bold mt-0.5 leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${
+                    sector.isCurrent
+                      ? 'text-emerald-300'
+                      : isTargetOfMarch
+                      ? 'text-amber-300'
+                      : isSelected
+                      ? 'text-yellow-300'
+                      : isDepleted
+                      ? 'text-rose-400'
+                      : 'text-emerald-400/80'
+                  }`}>
+                    {sector.distanceMeters > 0 ? `${sector.distanceMeters}м` : '0м'}
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Маркер вибору цілі в тумані */}
+            {selectedTarget && selectedTarget.isFog && (
+              (() => {
+                const selWorld = latLngToWorldPixel(selectedTarget.lat, selectedTarget.lng, zoom);
+                const selSx = selWorld.x - cameraWorld.x + containerSize.width / 2;
+                const selSy = selWorld.y - cameraWorld.y + containerSize.height / 2;
                 return (
                   <div
-                    key={sector.key}
-                    onClick={() => {
-                      if (hasMovedRef.current || expedition) return;
-                      setSelectedTarget({
-                        lat: sector.lat,
-                        lng: sector.lng,
-                        data: sector.data,
-                        dist: sector.distanceMeters,
-                        isFog: false
-                      });
-                    }}
                     style={{
                       position: 'absolute',
-                      left: pixelLeft,
-                      top: pixelTop,
-                      width: CELL_SIZE_PX,
-                      height: CELL_SIZE_PX
+                      left: selSx,
+                      top: selSy,
+                      transform: 'translate(-50%, -50%)'
                     }}
-                    className={`flex flex-col items-center justify-center cursor-pointer transition-all ${
-                      isDimmedMemory ? 'opacity-55 filter saturate-50' : ''
-                    }`}
+                    className="flex flex-col items-center pointer-events-none animate-in zoom-in-75 duration-150"
                   >
-                    {/* Кругове підсвічування обраного сектору замість квадрата */}
-                    <div className="relative flex items-center justify-center">
-                      {sector.isCurrent && (
-                        <div className="absolute w-11 h-11 rounded-full border border-emerald-400/90 bg-emerald-500/10 shadow-[0_0_16px_rgba(16,185,129,0.5)] animate-pulse" />
-                      )}
-
-                      {isSelected && !sector.isCurrent && (
-                        <div className="absolute w-11 h-11 rounded-full border-2 border-yellow-400 bg-yellow-400/10 shadow-[0_0_18px_rgba(250,204,21,0.6)] animate-in zoom-in-75 duration-150" />
-                      )}
-
-                      {isTargetOfMarch && (
-                        <div className="absolute w-11 h-11 rounded-full border border-amber-400/90 bg-amber-500/15 animate-ping" />
-                      )}
-
-                      {/* Центральна піктограма */}
-                      <div className="relative z-10 flex items-center justify-center p-1.5 rounded-full drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">
-                        {sector.isCurrent ? (
-                          <Crosshair className="w-5 h-5 text-emerald-300 animate-spin-slow" />
-                        ) : isTargetOfMarch ? (
-                          <Footprints className="w-5 h-5 text-amber-300 animate-bounce" />
-                        ) : isCampSector ? (
-                          <Tent className="w-5 h-5 text-emerald-400" />
-                        ) : (
-                          <SectorTacticalIcon icon={sector.data.icon} className="w-5 h-5" />
-                        )}
-                      </div>
-
-                      {/* Індикатори статусу */}
-                      {isDepleted && (
-                        <span className="absolute -top-1 -right-1 text-rose-400 bg-black/80 rounded-full p-0.5 shadow">
-                          <Lock className="w-2.5 h-2.5" />
-                        </span>
-                      )}
-                      {isPartiallySearched && (
-                        <span className="absolute -top-1.5 -left-1 text-[7px] text-amber-300 font-mono font-bold px-1 rounded-full bg-black/80 border border-amber-600/80">
-                          {searchesLeft}
-                        </span>
-                      )}
-                      {isBlockedWater && (
-                        <span className="absolute -bottom-1 -left-1 text-[8px]">🌊</span>
-                      )}
-                      {isCoastSector && (
-                        <span className="absolute -bottom-1 -right-1 text-[8px]">⚓</span>
-                      )}
+                    <div className="w-9 h-9 rounded-full border-2 border-amber-400 bg-amber-950/60 shadow-[0_0_15px_rgba(245,158,11,0.7)] flex items-center justify-center">
+                      <HelpCircle className="w-4 h-4 text-amber-300 animate-pulse" />
                     </div>
-
-                    {/* Тільки дистанція внизу */}
-                    <span className={`text-[8px] font-mono font-bold mt-1 leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${
-                      sector.isCurrent
-                        ? 'text-emerald-300'
-                        : isTargetOfMarch
-                        ? 'text-amber-300'
-                        : isSelected
-                        ? 'text-yellow-300'
-                        : isDepleted
-                        ? 'text-rose-400'
-                        : 'text-emerald-400/80'
-                    }`}>
-                      {sector.distanceMeters > 0 ? `${sector.distanceMeters}м` : '0м'}
+                    <span className="text-[8px] text-amber-300 font-mono font-bold mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
+                      {selectedTarget.dist}м
                     </span>
                   </div>
                 );
-              })}
-            </div>
+              })()
+            )}
           </div>
-
-          {/* Віньєтка глибини та радарне кільце */}
-          <div className="absolute inset-0 pointer-events-none bg-radial from-transparent via-[#030604]/20 to-[#030604]/80 z-20" />
         </div>
 
         {/* МОБІЛЬНИЙ ВІДЖЕТ ШВИДКОЇ ДІЇ ПІД МАПОЮ */}
@@ -666,15 +754,14 @@ export const MapView: React.FC<MapViewProps> = ({
           )}
         </div>
 
-        <div className="mt-2 pt-2 border-t border-[#1a291f] flex items-center justify-between text-[11px] text-[#718a78] z-20 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
-          <span>* Тягніть мапу для вільного огляду</span>
+        <div className="mt-2 pt-2 border-t border-[#1a291f] flex items-center justify-between text-[11px] text-[#718a78] z-30 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
+          <span>* Тягніть мапу для огляду • Клікайте на туман для розвідки</span>
           <span>Тактичний радар активний</span>
         </div>
       </div>
 
       {/* ПРАВА ПАНЕЛЬ ДЕТАЛЕЙ */}
       <div className="bg-[#101712] border border-[#233327] rounded-lg p-4 flex flex-col justify-between shadow-xl">
-        {/* ================= РЕЖИМ 1: ТАКТИЧНИЙ МАРШ У РОЗПАЛІ ================= */}
         {expedition && transitProgress ? (
           <div className="flex flex-col justify-between h-full space-y-4 animate-in fade-in duration-300">
             <div>
@@ -758,7 +845,6 @@ export const MapView: React.FC<MapViewProps> = ({
             )}
           </div>
         ) : (
-          /* ================= РЕЖИМ 2: СТАНДАРТНИЙ СТАН СЕКТОРА ================= */
           <div>
             <div className="text-[10px] uppercase tracking-wider text-[#567a5f] font-bold">ПОТОЧНИЙ СЕКТОР</div>
             <h3 className="text-base md:text-lg font-bold text-slate-100 mt-1 flex items-center gap-2">
@@ -835,7 +921,7 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         )}
 
-        {/* ================= НИЖНЯ ДЕТАЛЬНА КАРТКА ДЛЯ ДЕСКТОПУ ================= */}
+        {/* НИЖНЯ ДЕТАЛЬНА КАРТКА ДЛЯ ДЕСКТОПУ */}
         {!expedition && selectedTarget ? (
           isSelectedCurrent ? (
             <div className="mt-4 pt-3 border-t border-[#233327] bg-[#141d16] p-3 rounded border border-[#2c4232]">
@@ -918,7 +1004,7 @@ export const MapView: React.FC<MapViewProps> = ({
           ) : null
         ) : !expedition ? (
           <div className="mt-4 pt-3 border-t border-[#233327] text-center text-xs text-[#5f7564]">
-            Оберіть мітку на мапі для прорахунку маршу
+            Оберіть точку або нерозвідану зону на мапі для маршу
           </div>
         ) : null}
       </div>
