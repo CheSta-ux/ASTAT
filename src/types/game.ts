@@ -1,4 +1,4 @@
-export type PlayerCondition = 'comfort' | 'bleeding' | 'radiation' | 'zombified';
+export type PlayerCondition = 'comfort' | 'radiation' | 'bleeding' | 'zombified' | 'unconscious';
 
 export type Specialization = 'scout' | 'medic' | 'engineer' | 'soldier';
 

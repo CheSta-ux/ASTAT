@@ -1,6 +1,6 @@
 import './App.css';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle } from 'lucide-react';
+import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle, Skull, Lock } from 'lucide-react';
 
 import type { Coordinates, ExpeditionState, InventoryItem, PlayerStats, RadioMessage, TabType } from './types/game';
 import { calculateRealisticTravelTime, calculateHaversineDistanceMeters, offsetGeoBySectors } from './utils/coordinates';
@@ -39,7 +39,6 @@ interface GameToast {
   type: 'info' | 'warn' | 'danger' | 'success';
 }
 
-// Допоміжна функція відкриття секторів навколо заданих координат (радіус 1 сектор)
 const getSurroundingSectorKeys = (lat: number, lng: number): string[] => {
   const keys: string[] = [];
   for (let dy = -1; dy <= 1; dy++) {
@@ -57,15 +56,10 @@ export default function App() {
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [isBooting, setIsBooting] = useState(false);
 
-  // Стек Push-сповіщень
   const [notifications, setNotifications] = useState<GameToast[]>([]);
-
   const [sectorSearches, setSectorSearches] = useState<Record<string, SectorSearchRecord>>(loadSectorSearchHistory);
-
-  // Розвідані сектори (персональний туман війни)
   const [exploredSectors, setExploredSectors] = useState<string[]>([]);
 
-  // Гравець
   const [player, setPlayer] = useState<PlayerStats>({
     name: 'Виживший-33',
     callsign: 'Привид Полісся',
@@ -109,7 +103,6 @@ export default function App() {
     }, 4500);
   }, []);
 
-  // --- СИНХРОНІЗАЦІЯ СТАНУ З SUPABASE ---
   const syncGameState = useCallback(async (
     overridePlayer?: PlayerStats,
     overrideInventory?: InventoryItem[],
@@ -159,7 +152,6 @@ export default function App() {
     }
   }, [player, inventory, coords, campCoords, exploredSectors]);
 
-  // --- ВІДНОВЛЕННЯ ДАНИХ ПРИ СТАРТІ ---
   useEffect(() => {
     const localPlayerId = localStorage.getItem('astat_player_id');
     if (!localPlayerId) return;
@@ -206,7 +198,6 @@ export default function App() {
       });
   }, []);
 
-  // Періодичне автозбереження кожні 20 секунд
   useEffect(() => {
     if (!hasCompletedOnboarding) return;
     const interval = setInterval(() => {
@@ -215,7 +206,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [hasCompletedOnboarding, syncGameState]);
 
-  // Радіоефір та Realtime
   useEffect(() => {
     supabase
       .from('radio_messages')
@@ -283,6 +273,53 @@ export default function App() {
     syncGameState(nextPlayer);
   };
 
+  // Стан непритомності
+  const isUnconscious = player.hp <= 0 || player.conditions.includes('unconscious');
+
+  // Автоперемикання з заблокованої карти на рюкзак при втраті свідомості
+  useEffect(() => {
+    if (isUnconscious && activeTab === 'map') {
+      setActiveTab('inventory');
+    }
+  }, [isUnconscious, activeTab]);
+
+  // Дія 1: Гукати про допомогу в радіоефір (SOS)
+  const handleCallForHelp = async () => {
+    const sosMsg = `🚨 SOS! Виживанець ${player.callsign || player.name} впав без свідомості у секторі GPS: ${coords.lat.toFixed(4)}°, ${coords.lng.toFixed(4)}°! Потрібна термінова медична допомога!`;
+    await handleSendMessage(sosMsg, 'frequency', '104.2');
+    notify('📢 Сигнал SOS передано в загальний радіоефір!', 'warn');
+    setActiveTab('radio');
+  };
+
+  // Дія 2: Здатись (миттєва загибель)
+  const handleSurrender = () => {
+    const lostItemsCount = inventory.reduce((sum, item) => sum + item.count, 0);
+    const lostCoins = player.astatCoins;
+
+    const respawnCoords = { ...campCoords };
+    setCoords(respawnCoords);
+    setSelectedTarget(null);
+    setExpedition(null);
+    setInventory([]); // Речі залишаються на секторі
+
+    const respawnedPlayer: PlayerStats = {
+      ...player,
+      hp: 60,
+      hunger: 60,
+      astatCoins: 0, // Плати зникають
+      conditions: ['comfort']
+    };
+
+    setPlayer(respawnedPlayer);
+    syncGameState(respawnedPlayer, [], respawnCoords);
+
+    notify(
+      `💀 Ви здалися та загинули. ${lostItemsCount} предметів спорядження залишилося на секторі, а ${lostCoins} плат згоріли. Ви опритомніли біля вогнища у таборі.`,
+      'danger'
+    );
+    setActiveTab('map');
+  };
+
   const handleExpeditionComplete = (expData: any) => {
     const destCoords: Coordinates = expData.targetCoords || {
       x: expData.targetX,
@@ -301,7 +338,6 @@ export default function App() {
     setSelectedTarget(null);
     setExpedition(null);
 
-    // Розкриваємо сектори навколо нової точки від туману війни
     const newRevealed = getSurroundingSectorKeys(destCoords.lat, destCoords.lng);
     const nextExplored = Array.from(new Set([...exploredSectors, ...newRevealed]));
     setExploredSectors(nextExplored);
@@ -355,6 +391,11 @@ export default function App() {
   });
 
   const handleStartExpedition = (targetCoordObj: Coordinates) => {
+    if (isUnconscious) {
+      notify('Ви без свідомості! Пересування неможливе.', 'danger');
+      return;
+    }
+
     if (expedition) {
       notify('Ви вже перебуваєте в дорозі!', 'warn');
       return;
@@ -387,6 +428,11 @@ export default function App() {
   };
 
   const handleSearch = () => {
+    if (isUnconscious) {
+      notify('Ви без свідомості! Обстеження неможливе.', 'danger');
+      return;
+    }
+
     const distToCamp = calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng);
     if (distToCamp < 50) {
       notify('У межах Табору всі ресурси вже зібрані.', 'warn');
@@ -449,11 +495,25 @@ export default function App() {
         notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
       }
     } else if (roll < 0.80) {
-      nextPlayer.hp = Math.max(10, player.hp - 18);
+      const nextHp = Math.max(0, player.hp - 18);
+      nextPlayer.hp = nextHp;
+
       if (!nextPlayer.conditions.includes('bleeding')) {
         nextPlayer.conditions = [...nextPlayer.conditions, 'bleeding'];
       }
-      notify('🩸 Пастка! Отримано 18 шкоди та кровотечу!', 'danger');
+
+      if (nextHp <= 0) {
+        if (!nextPlayer.conditions.includes('unconscious')) {
+          nextPlayer.conditions = [...nextPlayer.conditions, 'unconscious'];
+        }
+        notify(
+          '💀 Ви впали без свідомості, все що в вас лишається це гукати на допомогу або спробувати підлікуватись самостійно',
+          'danger'
+        );
+        setActiveTab('inventory');
+      } else {
+        notify('🩸 Пастка! Отримано 18 шкоди та кровотечу!', 'danger');
+      }
     } else {
       notify('Ретельний огляд нічого не дав, лише іржа та порожнеча.', 'info');
     }
@@ -515,10 +575,18 @@ export default function App() {
     if (item.type === 'food') {
       updatedPlayer.hunger = Math.min(player.maxHunger, player.hunger + item.value);
       notify(`Вжито ${item.name}. Ситість +${item.value}%`, 'success');
-    } else if (item.type === 'medical_bleed') {
-      updatedPlayer.hp = Math.min(player.maxHp, player.hp + item.value);
-      updatedPlayer.conditions = player.conditions.filter((c) => c !== 'bleeding');
-      notify(`Бинт накладено. Кровотечу зупинено, +${item.value} HP.`, 'success');
+    } else if (item.type === 'medical_bleed' || item.type.startsWith('medical')) {
+      const healAmount = item.value || 20;
+      const nextHp = Math.min(player.maxHp, player.hp + healAmount);
+      updatedPlayer.hp = nextHp;
+      
+      updatedPlayer.conditions = player.conditions.filter((c) => c !== 'bleeding' && c !== 'unconscious');
+
+      if (player.hp <= 0 && nextHp > 0) {
+        notify(`✨ Бинт накладено. Ви опритомніли! HP: +${healAmount}. Карта знову доступна.`, 'success');
+      } else {
+        notify(`Бинт накладено. Кровотечу зупинено, +${healAmount} HP.`, 'success');
+      }
     } else if (item.type === 'medical_rad') {
       updatedPlayer.conditions = player.conditions.filter((c) => c !== 'radiation');
       notify('Антирад нейтралізував радіацію!', 'success');
@@ -613,7 +681,7 @@ export default function App() {
             </div>
             <button
               onClick={() => setShowAfkModal(true)}
-              className="px-2 py-1 bg-[#1a3321] hover:bg-[#25492f] border border-[#3b6b46] rounded text-[10px] text-emerald-200"
+              className="px-2 py-1 bg-[#1a3321] hover:bg-[#25462f] border border-[#3b6b46] rounded text-[10px] text-emerald-200"
             >
               Диспетчер ходу
             </button>
@@ -621,18 +689,83 @@ export default function App() {
         </div>
       )}
 
+      {/* ================= ЕКСТРЕНИЙ БАНЕР НЕПРИТОМНОСТІ ================= */}
+      {isUnconscious && (
+        <div className="max-w-7xl mx-auto w-full px-3 md:px-5 pt-3 z-30">
+          <div className="bg-[#260909]/95 border-2 border-red-600 rounded-lg p-3 md:p-4 shadow-[0_0_30px_rgba(220,38,38,0.4)] animate-pulse">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-3 text-center md:text-left">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-full bg-red-950 border border-red-600 shrink-0 shadow-lg">
+                  <Skull className="w-6 h-6 text-red-500 animate-bounce" />
+                </div>
+                <div>
+                  <h3 className="text-xs md:text-sm font-bold text-red-200 uppercase tracking-wider font-mono">
+                    КРИТИЧНИЙ СТАН // БЕЗ СВІДОМОСТІ (0 HP)
+                  </h3>
+                  <p className="text-xs text-red-300/90 mt-0.5 leading-relaxed font-mono">
+                    Ви впали без свідомості, все що в вас лишається це гукати на допомогу або спробувати підлікуватись самостійно.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 shrink-0 w-full md:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('inventory')}
+                  className="flex-1 md:flex-initial px-3.5 py-2 bg-[#1b3821] hover:bg-[#285732] border border-emerald-500 text-emerald-100 text-xs font-bold rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
+                >
+                  <Backpack className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>Інвентар (лікуватись)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCallForHelp}
+                  className="flex-1 md:flex-initial px-3.5 py-2 bg-[#2c1d12] hover:bg-[#422917] border border-amber-500 text-amber-200 text-xs font-bold rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
+                >
+                  <Radio className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+                  <span>Гукати допомогу (SOS)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSurrender}
+                  className="w-full md:w-auto px-3.5 py-2 bg-red-900/90 hover:bg-red-800 border border-red-500 text-white text-xs font-bold rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
+                >
+                  <Skull className="w-3.5 h-3.5 text-red-300 shrink-0" />
+                  <span>Здатись (загинути)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Основний робочий простір */}
       <main className="max-w-7xl mx-auto w-full p-3 md:p-5 flex-1 flex flex-col gap-4">
-        {/* Верхні вкладки (лише для ПК/планшетів) */}
+        {/* Верхні вкладки (ПК) */}
         <div className="hidden md:flex items-center gap-1.5 border-b border-[#243328] pb-2 overflow-x-auto no-scrollbar text-xs">
           <button
-            onClick={() => setActiveTab('map')}
+            onClick={() => {
+              if (isUnconscious) {
+                notify('Ви без свідомості! Карта та пересування недоступні.', 'danger');
+                return;
+              }
+              setActiveTab('map');
+            }}
+            disabled={isUnconscious}
             className={`flex items-center gap-2 px-3 py-2 rounded font-semibold whitespace-nowrap shrink-0 transition ${
-              activeTab === 'map' ? 'bg-[#1b2b20] text-emerald-300 border border-[#3b6645]' : 'text-[#7d9984] hover:text-[#c4d6c7]'
+              isUnconscious
+                ? 'opacity-40 bg-[#121713] text-[#55695b] cursor-not-allowed border border-[#1f2b21]'
+                : activeTab === 'map'
+                ? 'bg-[#1b2b20] text-emerald-300 border border-[#3b6645]'
+                : 'text-[#7d9984] hover:text-[#c4d6c7]'
             }`}
           >
-            <Compass className="w-4 h-4 shrink-0" /> Карта та сектор
+            {isUnconscious ? <Lock className="w-4 h-4 text-rose-500" /> : <Compass className="w-4 h-4 shrink-0" />}
+            <span>{isUnconscious ? 'Карта (Блоковано)' : 'Карта та сектор'}</span>
           </button>
+
           <button
             onClick={() => setActiveTab('inventory')}
             className={`flex items-center gap-2 px-3 py-2 rounded font-semibold whitespace-nowrap shrink-0 transition ${
@@ -641,6 +774,7 @@ export default function App() {
           >
             <Backpack className="w-4 h-4 shrink-0" /> Рюкзак та Крафт
           </button>
+          
           <button
             onClick={() => setActiveTab('radio')}
             className={`flex items-center gap-2 px-3 py-2 rounded font-semibold whitespace-nowrap shrink-0 transition ${
@@ -649,6 +783,7 @@ export default function App() {
           >
             <Radio className="w-4 h-4 shrink-0" /> Радіоефір
           </button>
+          
           <button
             onClick={() => setActiveTab('profile')}
             className={`flex items-center gap-2 px-3 py-2 rounded font-semibold whitespace-nowrap shrink-0 transition ${
@@ -659,7 +794,7 @@ export default function App() {
           </button>
         </div>
 
-        {activeTab === 'map' && (
+        {activeTab === 'map' && !isUnconscious && (
           <MapView
             coords={coords}
             campCoords={campCoords}
@@ -691,16 +826,27 @@ export default function App() {
         {activeTab === 'profile' && <ProfileView player={player} campCoords={campCoords} />}
       </main>
 
-      {/* Мобільна фіксована док-панель знизу (завжди під пальцем) */}
+      {/* Мобільна нижня док-панель */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070e0a]/95 backdrop-blur-lg border-t border-[#1e3825] px-2 py-1.5 flex items-center justify-around shadow-[0_-8px_20px_rgba(0,0,0,0.8)]">
         <button
-          onClick={() => setActiveTab('map')}
+          onClick={() => {
+            if (isUnconscious) {
+              notify('Ви без свідомості! Карта та пересування недоступні.', 'danger');
+              return;
+            }
+            setActiveTab('map');
+          }}
+          disabled={isUnconscious}
           className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg transition ${
-            activeTab === 'map' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+            isUnconscious
+              ? 'opacity-40 text-[#45574a] cursor-not-allowed'
+              : activeTab === 'map'
+              ? 'text-emerald-300 bg-[#14261a]'
+              : 'text-[#6b8572] hover:text-[#a1bda7]'
           }`}
         >
-          <Compass className="w-5 h-5 mb-0.5" />
-          <span className="text-[9px] font-bold tracking-tight">Карта</span>
+          {isUnconscious ? <Lock className="w-5 h-5 mb-0.5 text-rose-500" /> : <Compass className="w-5 h-5 mb-0.5" />}
+          <span className="text-[9px] font-bold tracking-tight">{isUnconscious ? 'Блок' : 'Карта'}</span>
         </button>
 
         <button
