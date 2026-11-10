@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   MapPin, Eye, Bed, Tent, Footprints, AlertCircle, Waves, 
   Building2, Factory, Route, Anchor, 
   Compass, Ship, Zap, Mountain, Crosshair, Wheat, TreePine, 
-  Clock, Lock, CheckCircle2, Radio, HelpCircle,
-  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, LocateFixed
+  Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed
 } from 'lucide-react';
 import type { Coordinates, ExpeditionState, PlayerStats, SectorDefinition } from '../types/game';
 import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisticTravelTime } from '../utils/coordinates';
@@ -94,8 +93,15 @@ export const MapView: React.FC<MapViewProps> = ({
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
 
-  // Зміщення фокусу огляду карти (вільний панінг у будь-який бік)
+  // Зміщення фокусу огляду карти через драг пальцем або мишкою
   const [viewOffset, setViewOffset] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+
+  // Рефи для обробки жестів перетягування (Drag-to-Pan)
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+  const startPosRef = useRef({ x: 0, y: 0 });
+  const hasMovedRef = useRef(false);
+  const lastWheelTimeRef = useRef(0);
 
   const [currentTime, setCurrentTime] = useState(Date.now());
   useEffect(() => {
@@ -182,7 +188,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const isCampSector = distFromCamp < 50;
       const isCurrentPlayerPos = distFromPlayer < 50;
 
-      // Пряма видимість тактичного радара: сектор гравця та прилеглі (до 150м)
+      // Пряма видимість тактичного радара: сектор гравця та прилеглі (до 160м)
       const isLiveRadar = distFromPlayer <= 160;
       const isEverExplored = exploredSet.has(sec.key) || isCurrentPlayerPos || isCampSector;
       const isFog = !isLiveRadar && !isEverExplored;
@@ -299,6 +305,89 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition, expeditionTargetCoords, coords, radarMap]);
 
+  // ================= ОБРОБКА ЖЕСТІВ ПЕРЕТЯГУВАННЯ (ТАЧ + МИШКА) =================
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    isDraggingRef.current = true;
+    hasMovedRef.current = false;
+    startPosRef.current = { x: e.clientX, y: e.clientY };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current) return;
+
+    const deltaX = e.clientX - startPosRef.current.x;
+    const deltaY = e.clientY - startPosRef.current.y;
+
+    if (!hasMovedRef.current && Math.hypot(deltaX, deltaY) > 8) {
+      hasMovedRef.current = true;
+    }
+
+    if (!hasMovedRef.current) return;
+
+    const container = containerRef.current;
+    const cellPx = container ? container.clientWidth / 5 : 65;
+    const threshold = cellPx * 0.7;
+
+    let stepX = 0;
+    let stepY = 0;
+
+    if (Math.abs(deltaX) >= threshold) {
+      stepX = deltaX > 0 ? -1 : 1;
+      startPosRef.current.x = e.clientX;
+    }
+
+    if (Math.abs(deltaY) >= threshold) {
+      stepY = deltaY > 0 ? 1 : -1;
+      startPosRef.current.y = e.clientY;
+    }
+
+    if (stepX !== 0 || stepY !== 0) {
+      setViewOffset((prev) => ({
+        dx: prev.dx + stepX,
+        dy: prev.dy + stepY
+      }));
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+    setTimeout(() => {
+      hasMovedRef.current = false;
+    }, 80);
+  };
+
+  // Коліщатко миші для ПК
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const now = Date.now();
+    if (now - lastWheelTimeRef.current < 90) return;
+    lastWheelTimeRef.current = now;
+
+    let stepX = 0;
+    let stepY = 0;
+
+    if (Math.abs(e.deltaY) > 20) {
+      stepY = e.deltaY > 0 ? -1 : 1;
+    }
+    if (Math.abs(e.deltaX) > 20) {
+      stepX = e.deltaX > 0 ? 1 : -1;
+    }
+
+    if (stepX !== 0 || stepY !== 0) {
+      setViewOffset((prev) => ({
+        dx: prev.dx + stepX,
+        dy: prev.dy + stepY
+      }));
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
       <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative">
@@ -308,9 +397,9 @@ export const MapView: React.FC<MapViewProps> = ({
           <div className="flex items-center gap-1.5 text-emerald-300 font-bold bg-[#08100b]/90 px-2 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs">
             <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
             <span>GPS: {coords.lat.toFixed(4)}°, {coords.lng.toFixed(4)}°</span>
-            {viewOffset.dx !== 0 || viewOffset.dy !== 0 ? (
+            {(viewOffset.dx !== 0 || viewOffset.dy !== 0) && (
               <span className="text-amber-400 ml-1 text-[9px] font-mono">(Огляд зміщено)</span>
-            ) : null}
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -332,8 +421,17 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
 
-        {/* СИНХРОНІЗОВАНИЙ В'ЮПОРТ ДЛЯ МАПИ ТА СІТКИ З ПАНІНГОМ */}
-        <div className="relative w-full max-w-[620px] aspect-square mx-auto my-auto rounded-lg overflow-hidden border border-[#233327] bg-[#070d09] shadow-inner">
+        {/* СИНХРОНІЗОВАНИЙ В'ЮПОРТ З ЖЕСТАМИ ПЕРЕТЯГУВАННЯ */}
+        <div 
+          ref={containerRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          onWheel={handleWheel}
+          className="relative w-full max-w-[620px] aspect-square mx-auto my-auto rounded-lg overflow-hidden border border-[#233327] bg-[#070d09] shadow-inner select-none touch-none cursor-grab active:cursor-grabbing"
+        >
+          {/* Топографічна підкладка */}
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden opacity-80">
             <div
               className="grid grid-cols-3 shrink-0"
@@ -348,8 +446,9 @@ export const MapView: React.FC<MapViewProps> = ({
                   key={t.key}
                   src={`https://tile.opentopomap.org/${zoom}/${t.x}/${t.y}.png`}
                   alt="topo"
-                  className="w-full h-full object-cover filter invert hue-rotate-180 brightness-80 contrast-125"
+                  className="w-full h-full object-cover filter invert hue-rotate-180 brightness-80 contrast-125 pointer-events-none"
                   loading="eager"
+                  draggable={false}
                 />
               ))}
             </div>
@@ -358,7 +457,7 @@ export const MapView: React.FC<MapViewProps> = ({
           <div className="absolute inset-0 bg-radial from-transparent via-[#060a07]/20 to-[#040605]/80 pointer-events-none z-0" />
 
           {/* ТАКТИЧНА СІТКА 5x5 З ТУМАНОМ ВІЙНИ */}
-          <div className="absolute inset-0 grid grid-cols-5 p-1.5 gap-1.5 select-none z-10">
+          <div className="absolute inset-0 grid grid-cols-5 p-1.5 gap-1.5 z-10">
             {visibleSectors.map((sector, idx) => {
               const isCampSector = calculateHaversineDistanceMeters(sector.lat, sector.lng, campCoords.lat, campCoords.lng) < 50;
               const isSelected = selectedTarget?.lat === sector.lat && selectedTarget?.lng === sector.lng;
@@ -371,21 +470,21 @@ export const MapView: React.FC<MapViewProps> = ({
               const isPartiallySearched = searchesLeft < 4 && !isDepleted;
               const isTargetOfMarch = sector.isExpeditionDestination;
 
-              // --- СТАН 1: ТУМАН ВІЙНИ (Terra Incognita) ---
+              // --- СТАН 1: ТУМАН ВІЙНИ ---
               if (sector.isFog) {
                 return (
                   <div
                     key={idx}
-                    onClick={() =>
-                      !expedition &&
+                    onClick={() => {
+                      if (hasMovedRef.current || expedition) return;
                       setSelectedTarget({
                         lat: sector.lat,
                         lng: sector.lng,
                         data: sector.data,
                         dist: sector.distanceMeters,
                         isFog: true
-                      })
-                    }
+                      });
+                    }}
                     className={`rounded border transition-all flex flex-col items-center justify-between p-1 relative cursor-pointer overflow-hidden group ${
                       isTargetOfMarch
                         ? 'bg-amber-950/70 border-amber-400 ring-2 ring-amber-400 animate-pulse'
@@ -425,16 +524,16 @@ export const MapView: React.FC<MapViewProps> = ({
               return (
                 <div
                   key={idx}
-                  onClick={() =>
-                    !expedition &&
+                  onClick={() => {
+                    if (hasMovedRef.current || expedition) return;
                     setSelectedTarget({
                       lat: sector.lat,
                       lng: sector.lng,
                       data: sector.data,
                       dist: sector.distanceMeters,
                       isFog: false
-                    })
-                  }
+                    });
+                  }}
                   className={`rounded border transition-all flex flex-col items-center justify-between p-1 relative cursor-pointer overflow-hidden group ${
                     sector.isCurrent
                       ? 'bg-emerald-950/50 border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.7)] ring-2 ring-emerald-400 backdrop-blur-[1px]'
@@ -519,51 +618,20 @@ export const MapView: React.FC<MapViewProps> = ({
             })}
           </div>
 
-          {/* НАВІГАЦІЙНІ СТРІЛКИ ПЕРЕМІЩЕННЯ ОГЛЯДУ (PAN CONTROLS) */}
-          <div className="absolute bottom-2 right-2 z-20 flex flex-col items-center bg-[#060c08]/90 p-1 rounded-lg border border-[#1e3825] backdrop-blur-md shadow-xl">
+          {/* Плаваючий компактний бейдж центрування при зміщенні огляду */}
+          {(viewOffset.dx !== 0 || viewOffset.dy !== 0) && (
             <button
               type="button"
-              onClick={() => setViewOffset((prev) => ({ ...prev, dy: prev.dy + 1 }))}
-              className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
-              title="Огляд на північ"
+              onClick={(e) => {
+                e.stopPropagation();
+                setViewOffset({ dx: 0, dy: 0 });
+              }}
+              className="absolute bottom-2.5 right-2.5 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-[#0b1610]/95 hover:bg-[#14261b] border border-emerald-500/80 text-emerald-300 text-[10px] font-mono font-bold rounded-lg shadow-2xl backdrop-blur-md transition active:scale-95 animate-in fade-in"
             >
-              <ArrowUp className="w-3.5 h-3.5" />
+              <LocateFixed className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Центрувати</span>
             </button>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setViewOffset((prev) => ({ ...prev, dx: prev.dx - 1 }))}
-                className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
-                title="Огляд на захід"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewOffset({ dx: 0, dy: 0 })}
-                className="p-1 hover:bg-[#1a3321] text-amber-300 rounded active:scale-90"
-                title="Центрувати на виживанці"
-              >
-                <LocateFixed className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewOffset((prev) => ({ ...prev, dx: prev.dx + 1 }))}
-                className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
-                title="Огляд на схід"
-              >
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setViewOffset((prev) => ({ ...prev, dy: prev.dy - 1 }))}
-              className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
-              title="Огляд на південь"
-            >
-              <ArrowDown className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          )}
         </div>
 
         {/* ================= МОБІЛЬНИЙ ВІДЖЕТ ШВИДКОЇ ДІЇ (ОДРАЗУ ПІД КАРТОЮ) ================= */}
@@ -637,7 +705,7 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
 
         <div className="mt-2 pt-2 border-t border-[#1a291f] flex items-center justify-between text-[11px] text-[#718a78] z-10 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
-          <span>* Тактичний радар: радіус огляду та туман війни</span>
+          <span>* Тягніть карту пальцем або мишкою для огляду секторів</span>
           <span>Огляд: 500×500 м</span>
         </div>
       </div>
