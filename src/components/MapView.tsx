@@ -93,10 +93,8 @@ export const MapView: React.FC<MapViewProps> = ({
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
 
-  // Зміщення фокусу огляду карти через драг пальцем або мишкою
   const [viewOffset, setViewOffset] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 
-  // Рефи для обробки жестів перетягування (Drag-to-Pan)
   const containerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const startPosRef = useRef({ x: 0, y: 0 });
@@ -109,7 +107,6 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Географічний центр поточної камери
   const cameraCenter = useMemo(() => {
     return offsetGeoBySectors(coords.lat, coords.lng, viewOffset.dx, viewOffset.dy);
   }, [coords.lat, coords.lng, viewOffset]);
@@ -139,7 +136,6 @@ export const MapView: React.FC<MapViewProps> = ({
     return list;
   }, [centerTileX, centerTileY]);
 
-  // Список 25 секторів навколо камери огляду
   const sectorList = useMemo(() => {
     const list = [];
     for (let dy = gridRadius; dy >= -gridRadius; dy--) {
@@ -169,7 +165,6 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [cameraCenter.lat, cameraCenter.lng, sectorList]);
 
-  // Координати цілі активного маршу
   const expeditionTargetCoords = useMemo(() => {
     if (!expedition) return null;
     return (expedition as any).targetCoords || {
@@ -178,7 +173,6 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition]);
 
-  // Сет розвіданих секторів
   const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
 
   const visibleSectors = useMemo(() => {
@@ -188,7 +182,6 @@ export const MapView: React.FC<MapViewProps> = ({
       const isCampSector = distFromCamp < 50;
       const isCurrentPlayerPos = distFromPlayer < 50;
 
-      // Пряма видимість тактичного радара: сектор гравця та прилеглі (до 160м)
       const isLiveRadar = distFromPlayer <= 160;
       const isEverExplored = exploredSet.has(sec.key) || isCurrentPlayerPos || isCampSector;
       const isFog = !isLiveRadar && !isEverExplored;
@@ -305,15 +298,12 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition, expeditionTargetCoords, coords, radarMap]);
 
-  // ================= ОБРОБКА ЖЕСТІВ ПЕРЕТЯГУВАННЯ (ТАЧ + МИШКА) =================
+  // ================= ОБРОБКА ЖЕСТІВ (БЕЗ БЛОКУВАННЯ КЛІКІВ) =================
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     isDraggingRef.current = true;
     hasMovedRef.current = false;
     startPosRef.current = { x: e.clientX, y: e.clientY };
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch (_) {}
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -322,15 +312,19 @@ export const MapView: React.FC<MapViewProps> = ({
     const deltaX = e.clientX - startPosRef.current.x;
     const deltaY = e.clientY - startPosRef.current.y;
 
-    if (!hasMovedRef.current && Math.hypot(deltaX, deltaY) > 8) {
+    // Вмикаємо перехоплення ТІЛЬКИ якщо палець/мишка змістилися більше ніж на 10px
+    if (!hasMovedRef.current && Math.hypot(deltaX, deltaY) > 10) {
       hasMovedRef.current = true;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (_) {}
     }
 
     if (!hasMovedRef.current) return;
 
     const container = containerRef.current;
     const cellPx = container ? container.clientWidth / 5 : 65;
-    const threshold = cellPx * 0.7;
+    const threshold = cellPx * 0.6;
 
     let stepX = 0;
     let stepY = 0;
@@ -356,15 +350,20 @@ export const MapView: React.FC<MapViewProps> = ({
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingRef.current) return;
     isDraggingRef.current = false;
+
     try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
     } catch (_) {}
-    setTimeout(() => {
-      hasMovedRef.current = false;
-    }, 80);
+
+    if (hasMovedRef.current) {
+      setTimeout(() => {
+        hasMovedRef.current = false;
+      }, 120);
+    }
   };
 
-  // Коліщатко миші для ПК
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     const now = Date.now();
     if (now - lastWheelTimeRef.current < 90) return;
@@ -421,7 +420,7 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
 
-        {/* СИНХРОНІЗОВАНИЙ В'ЮПОРТ З ЖЕСТАМИ ПЕРЕТЯГУВАННЯ */}
+        {/* СИНХРОНІЗОВАНИЙ В'ЮПОРТ ДЛЯ МАПИ ТА СІТКИ */}
         <div 
           ref={containerRef}
           onPointerDown={handlePointerDown}
@@ -431,7 +430,6 @@ export const MapView: React.FC<MapViewProps> = ({
           onWheel={handleWheel}
           className="relative w-full max-w-[620px] aspect-square mx-auto my-auto rounded-lg overflow-hidden border border-[#233327] bg-[#070d09] shadow-inner select-none touch-none cursor-grab active:cursor-grabbing"
         >
-          {/* Топографічна підкладка */}
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden opacity-80">
             <div
               className="grid grid-cols-3 shrink-0"
@@ -460,7 +458,10 @@ export const MapView: React.FC<MapViewProps> = ({
           <div className="absolute inset-0 grid grid-cols-5 p-1.5 gap-1.5 z-10">
             {visibleSectors.map((sector, idx) => {
               const isCampSector = calculateHaversineDistanceMeters(sector.lat, sector.lng, campCoords.lat, campCoords.lng) < 50;
-              const isSelected = selectedTarget?.lat === sector.lat && selectedTarget?.lng === sector.lng;
+              const isSelected = Boolean(
+                selectedTarget &&
+                calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 15
+              );
               const isBlockedWater = Boolean(sector.data.isWaterBlocked);
               const isCoastSector = !isBlockedWater && sector.data.biomeType === 'water';
               const biome = sector.classification.biome;
@@ -489,7 +490,7 @@ export const MapView: React.FC<MapViewProps> = ({
                       isTargetOfMarch
                         ? 'bg-amber-950/70 border-amber-400 ring-2 ring-amber-400 animate-pulse'
                         : isSelected
-                        ? 'bg-[#0f1410] border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)] ring-1 ring-amber-400'
+                        ? 'bg-[#18261c] border-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.8)] ring-2 ring-yellow-400 scale-[1.02] z-20'
                         : 'bg-[#040705]/95 border-[#152218]/90 hover:border-[#2f5436]'
                     }`}
                   >
@@ -540,7 +541,7 @@ export const MapView: React.FC<MapViewProps> = ({
                       : isTargetOfMarch
                       ? 'bg-amber-950/60 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.75)] ring-2 ring-amber-400 animate-pulse'
                       : isSelected
-                      ? 'bg-amber-950/50 border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.6)] ring-1 ring-yellow-400'
+                      ? 'bg-amber-950/70 border-yellow-400 shadow-[0_0_14px_rgba(250,204,21,0.85)] ring-2 ring-yellow-400 scale-[1.02] z-20'
                       : isCampSector
                       ? 'bg-blue-950/45 border-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]'
                       : isBlockedWater
@@ -617,21 +618,6 @@ export const MapView: React.FC<MapViewProps> = ({
               );
             })}
           </div>
-
-          {/* Плаваючий компактний бейдж центрування при зміщенні огляду */}
-          {(viewOffset.dx !== 0 || viewOffset.dy !== 0) && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setViewOffset({ dx: 0, dy: 0 });
-              }}
-              className="absolute bottom-2.5 right-2.5 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-[#0b1610]/95 hover:bg-[#14261b] border border-emerald-500/80 text-emerald-300 text-[10px] font-mono font-bold rounded-lg shadow-2xl backdrop-blur-md transition active:scale-95 animate-in fade-in"
-            >
-              <LocateFixed className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Центрувати</span>
-            </button>
-          )}
         </div>
 
         {/* ================= МОБІЛЬНИЙ ВІДЖЕТ ШВИДКОЇ ДІЇ (ОДРАЗУ ПІД КАРТОЮ) ================= */}
@@ -678,7 +664,6 @@ export const MapView: React.FC<MapViewProps> = ({
             </div>
           )}
 
-          {/* Швидкі дії в поточному секторі на мобільному */}
           {!expedition && (!selectedTarget || isSelectedCurrent) && (
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -948,9 +933,9 @@ export const MapView: React.FC<MapViewProps> = ({
                       lng: selectedTarget.lng
                     })
                   }
-                  className="w-full mt-2.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs rounded transition flex items-center justify-center gap-2"
+                  className="w-full mt-2.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs rounded transition flex items-center justify-center gap-2 shadow-lg active:scale-98"
                 >
-                  <Footprints className="w-4 h-4" /> 
+                  <Footprints className="w-4 h-4 shrink-0" /> 
                   <span>{selectedTarget.isFog ? 'Розпочати розвідку' : 'Почати марш'}</span>
                 </button>
               )}
