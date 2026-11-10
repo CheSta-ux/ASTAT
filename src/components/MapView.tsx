@@ -122,19 +122,11 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // Стаціонарний крок сектора (100 метрів)
-  const gridStep = useMemo(() => {
-    const stepN = offsetGeoBySectors(coords.lat, coords.lng, 0, 1);
-    const stepE = offsetGeoBySectors(coords.lat, coords.lng, 1, 0);
-    return {
-      dLat: stepN.lat - coords.lat,
-      dLng: stepE.lng - coords.lng
-    };
-  }, [coords.lat, coords.lng]);
-
+  // Фіксовані світові пікселі гравця та табору
   const playerWorld = useMemo(() => latLngToWorldPixel(coords.lat, coords.lng, zoom), [coords.lat, coords.lng]);
   const campWorld = useMemo(() => latLngToWorldPixel(campCoords.lat, campCoords.lng, zoom), [campCoords.lat, campCoords.lng]);
 
+  // Світові пікселі камери (зміщуються строго разом із panPx)
   const cameraWorld = useMemo(() => ({
     x: playerWorld.x - panPx.x,
     y: playerWorld.y - panPx.y
@@ -145,13 +137,12 @@ export const MapView: React.FC<MapViewProps> = ({
     [cameraWorld.x, cameraWorld.y]
   );
 
-  // Точні координати виживанця на екрані (завжди точні, незалежно від огляду)
+  // Екранні позиції (вираховуються абсолютно синхронно для всіх об'єктів)
   const playerScreen = useMemo(() => ({
     x: playerWorld.x - cameraWorld.x + containerSize.width / 2,
     y: playerWorld.y - cameraWorld.y + containerSize.height / 2
   }), [playerWorld.x, playerWorld.y, cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
 
-  // Координати табору на екрані
   const campScreen = useMemo(() => ({
     x: campWorld.x - cameraWorld.x + containerSize.width / 2,
     y: campWorld.y - cameraWorld.y + containerSize.height / 2
@@ -162,7 +153,7 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [coords.lat, coords.lng, campCoords.lat, campCoords.lng]);
   const isAtCamp = distanceToCampMeters < 50;
 
-  // Тайли OpenTopoMap підкладки
+  // Динамічний буфер тайлів OpenTopoMap
   const visibleTiles = useMemo(() => {
     const halfW = containerSize.width / 2;
     const halfH = containerSize.height / 2;
@@ -192,26 +183,36 @@ export const MapView: React.FC<MapViewProps> = ({
     return tiles;
   }, [cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
 
-  // Сектори генеруються на стаціонарній глобальній сітці відносно поточної позиції виживанця
-  const centerSectorOffset = useMemo(() => {
-    const pxPerSecX = 76;
-    const pxPerSecY = 76;
+  // СТАБІЛЬНА ГЛОБАЛЬНА СІТКА СЕКТОРІВ
+  // Сектори прив'язані до координат табору як нерухомого якоря світу
+  const gridStep = useMemo(() => {
+    const stepN = offsetGeoBySectors(campCoords.lat, campCoords.lng, 0, 1);
+    const stepE = offsetGeoBySectors(campCoords.lat, campCoords.lng, 1, 0);
     return {
-      gx: Math.round(-panPx.x / pxPerSecX),
-      gy: Math.round(panPx.y / pxPerSecY)
+      dLat: stepN.lat - campCoords.lat,
+      dLng: stepE.lng - campCoords.lng
     };
-  }, [panPx.x, panPx.y]);
+  }, [campCoords.lat, campCoords.lng]);
 
+  const cameraGridCenter = useMemo(() => {
+    if (!gridStep.dLat || !gridStep.dLng) return { gx: 0, gy: 0 };
+    return {
+      gx: Math.round((cameraLatLng.lng - campCoords.lng) / gridStep.dLng),
+      gy: Math.round((cameraLatLng.lat - campCoords.lat) / gridStep.dLat)
+    };
+  }, [cameraLatLng.lat, cameraLatLng.lng, campCoords.lat, campCoords.lng, gridStep]);
+
+  // Генеруємо сектори на дискретній сітці (кожен сектор має незмінний географічний ключ)
   const sectorList = useMemo(() => {
     const list = [];
-    const radX = 5;
-    const radY = 4;
-    for (let dy = centerSectorOffset.gy + radY; dy >= centerSectorOffset.gy - radY; dy--) {
-      for (let dx = centerSectorOffset.gx - radX; dx <= centerSectorOffset.gx + radX; dx++) {
-        const geo = offsetGeoBySectors(coords.lat, coords.lng, dx, dy);
+    const radX = 6;
+    const radY = 5;
+    for (let dy = cameraGridCenter.gy + radY; dy >= cameraGridCenter.gy - radY; dy--) {
+      for (let dx = cameraGridCenter.gx - radX; dx <= cameraGridCenter.gx + radX; dx++) {
+        const geo = offsetGeoBySectors(campCoords.lat, campCoords.lng, dx, dy);
         list.push({
-          dx,
-          dy,
+          gx: dx,
+          gy: dy,
           lat: Number(geo.lat.toFixed(5)),
           lng: Number(geo.lng.toFixed(5)),
           key: `${geo.lat.toFixed(5)}-${geo.lng.toFixed(5)}`
@@ -219,9 +220,9 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
     return list;
-  }, [coords.lat, coords.lng, centerSectorOffset.gx, centerSectorOffset.gy]);
+  }, [campCoords.lat, campCoords.lng, cameraGridCenter.gx, cameraGridCenter.gy]);
 
-  // Запит на водойми з дебаунсом і стабілізацією
+  // Запит аналізу рельєфу (з дебаунсом)
   useEffect(() => {
     let isMounted = true;
     const timer = setTimeout(() => {
@@ -248,11 +249,12 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
 
+  // Обчислення екранних позицій секторів
   const visibleSectors = useMemo(() => {
     return sectorList.map((sec) => {
       const distFromPlayer = calculateHaversineDistanceMeters(coords.lat, coords.lng, sec.lat, sec.lng);
       const distFromCamp = calculateHaversineDistanceMeters(sec.lat, sec.lng, campCoords.lat, campCoords.lng);
-      const isCampSector = distFromCamp < 50;
+      const isCampSector = distFromCamp < 45;
       const isCurrentPlayerPos = distFromPlayer < 45;
 
       const isLiveRadar = distFromPlayer <= 165;
@@ -260,7 +262,6 @@ export const MapView: React.FC<MapViewProps> = ({
       const isFog = !isLiveRadar && !isEverExplored;
 
       const rawClass = radarMap[sec.key];
-      // Захист: суходіл не блокується, берег залишається пішохідним з рідним біомом
       const isBlockedWater = Boolean(rawClass?.isWater && !rawClass?.isCoast && !isCurrentPlayerPos && !isCampSector);
       const isCoast = Boolean(rawClass?.isCoast);
       const biome = rawClass?.biome || (isBlockedWater ? 'water' : 'forest');
@@ -272,22 +273,14 @@ export const MapView: React.FC<MapViewProps> = ({
         calculateHaversineDistanceMeters(sec.lat, sec.lng, expeditionTargetCoords.lat, expeditionTargetCoords.lng) < 45
       );
 
+      // Кожен сектор отримує екранні координати від своєї фіксованої світової точки
       const secWorld = latLngToWorldPixel(sec.lat, sec.lng, zoom);
       const screenX = secWorld.x - cameraWorld.x + containerSize.width / 2;
       const screenY = secWorld.y - cameraWorld.y + containerSize.height / 2;
 
-      const sectorData = createSectorData(
-        sec.lat,
-        sec.lng,
-        isBlockedWater,
-        isCoast,
-        isCampSector,
-        biome
-      );
-
       return {
         ...sec,
-        data: sectorData,
+        data: createSectorData(sec.lat, sec.lng, isBlockedWater, isCoast, isCampSector, biome),
         isBlockedWater,
         isCoast,
         searchState,
@@ -304,7 +297,7 @@ export const MapView: React.FC<MapViewProps> = ({
     });
   }, [sectorList, coords, campCoords, exploredSet, radarMap, sectorSearches, currentTime, expeditionTargetCoords, cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
 
-  // Малювання суцільного туману війни
+  // Рендеринг туману війни на Canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -322,7 +315,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
     ctx.globalCompositeOperation = 'destination-out';
 
-    // Розвідані раніше сектори
+    // Розвідані сектори
     exploredSectors.forEach((key) => {
       const parts = key.split('-');
       if (parts.length >= 2) {
@@ -346,7 +339,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
-    // Табір розкритий постійно
+    // Базовий табір
     const campSx = campScreen.x + FOG_OVERFLOW;
     const campSy = campScreen.y + FOG_OVERFLOW;
     const campGrad = ctx.createRadialGradient(campSx, campSy, 15, campSx, campSy, 100);
@@ -357,7 +350,7 @@ export const MapView: React.FC<MapViewProps> = ({
     ctx.arc(campSx, campSy, 100, 0, Math.PI * 2);
     ctx.fill();
 
-    // Зона огляду навколо гравця
+    // Зона навколо виживанця
     const pSx = playerScreen.x + FOG_OVERFLOW;
     const pSy = playerScreen.y + FOG_OVERFLOW;
     const liveGrad = ctx.createRadialGradient(pSx, pSy, 45, pSx, pSy, 165);
@@ -373,14 +366,7 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [containerSize.width, containerSize.height, cameraWorld.x, cameraWorld.y, campScreen.x, campScreen.y, playerScreen.x, playerScreen.y, exploredSectors]);
 
   const currentSectorInfo = useMemo(() => {
-    return createSectorData(
-      coords.lat,
-      coords.lng,
-      false,
-      false,
-      isAtCamp,
-      'forest'
-    );
+    return createSectorData(coords.lat, coords.lng, false, false, isAtCamp, 'forest');
   }, [coords, isAtCamp]);
 
   const currentSearchStatus = useMemo(() => {
@@ -436,7 +422,7 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition, expeditionTargetCoords, coords]);
 
-  // Обробка миші та тачу
+  // Жестове панорамування
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     isDraggingRef.current = true;
@@ -483,14 +469,14 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   };
 
-  // Клік на мапу з точною дискретною прив'язкою до сітки
+  // Клік на мапу
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (hasMovedRef.current || expedition) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickScreenX = e.clientX - rect.left;
     const clickScreenY = e.clientY - rect.top;
 
-    // Клік біля маркера гравця
+    // 1. Клік біля виживанця
     if (Math.hypot(playerScreen.x - clickScreenX, playerScreen.y - clickScreenY) < 32) {
       setSelectedTarget({
         lat: coords.lat,
@@ -502,7 +488,7 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    // Клік біля бази
+    // 2. Клік біля бази
     if (Math.hypot(campScreen.x - clickScreenX, campScreen.y - clickScreenY) < 32) {
       setSelectedTarget({
         lat: campCoords.lat,
@@ -514,7 +500,7 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    // Клік по відкритому сектору
+    // 3. Клік по розвіданому сектору
     const nearest = visibleSectors.find(
       (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 32
     );
@@ -530,16 +516,16 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    // Клік у глибину туману: дискретна прив'язка до сітки 100м відносно coords
+    // 4. Клік у туман: прив'язуємо до стабільної сітки від табору
     const clickWorldX = cameraWorld.x - containerSize.width / 2 + clickScreenX;
     const clickWorldY = cameraWorld.y - containerSize.height / 2 + clickScreenY;
     const clickGeo = worldPixelToLatLng(clickWorldX, clickWorldY, zoom);
 
     if (!gridStep.dLat || !gridStep.dLng) return;
-    const targetGy = Math.round((clickGeo.lat - coords.lat) / gridStep.dLat);
-    const targetGx = Math.round((clickGeo.lng - coords.lng) / gridStep.dLng);
+    const targetGy = Math.round((clickGeo.lat - campCoords.lat) / gridStep.dLat);
+    const targetGx = Math.round((clickGeo.lng - campCoords.lng) / gridStep.dLng);
 
-    const snappedGeo = offsetGeoBySectors(coords.lat, coords.lng, targetGx, targetGy);
+    const snappedGeo = offsetGeoBySectors(campCoords.lat, campCoords.lng, targetGx, targetGy);
     const snappedLat = Number(snappedGeo.lat.toFixed(5));
     const snappedLng = Number(snappedGeo.lng.toFixed(5));
     const snappedKey = `${snappedLat.toFixed(5)}-${snappedLng.toFixed(5)}`;
@@ -565,6 +551,16 @@ export const MapView: React.FC<MapViewProps> = ({
   };
 
   const isPanned = Math.hypot(panPx.x, panPx.y) > 20;
+
+  // Вираховуємо світову позицію обраного сектора (щоб маркер цілі рухався разом із мапою)
+  const selectedTargetScreen = useMemo(() => {
+    if (!selectedTarget) return null;
+    const wPos = latLngToWorldPixel(selectedTarget.lat, selectedTarget.lng, zoom);
+    return {
+      x: wPos.x - cameraWorld.x + containerSize.width / 2,
+      y: wPos.y - cameraWorld.y + containerSize.height / 2
+    };
+  }, [selectedTarget, cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
@@ -651,10 +647,10 @@ export const MapView: React.FC<MapViewProps> = ({
             className="pointer-events-none z-10 opacity-95"
           />
 
-          {/* 3. ШАР ТАКТИЧНИХ МАРКЕРІВ */}
+          {/* 3. ШАР ТАКТИЧНИХ МАРКЕРІВ (РУХАЄТЬСЯ 1:1 РАЗОМ ІЗ КАРТОЮ) */}
           <div className="absolute inset-0 pointer-events-none z-20">
             
-            {/* А) НЕЗАЛЕЖНИЙ МАРКЕР ВИЖИВАНЦЯ (ЗАВЖДИ ПРИСУТНІЙ НА СВОЇХ GPS) */}
+            {/* А) МАРКЕР ВИЖИВАНЦЯ */}
             <div
               style={{
                 position: 'absolute',
@@ -663,7 +659,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 transform: 'translate(-50%, -50%)',
                 zIndex: 35
               }}
-              className="pointer-events-none flex flex-col items-center justify-center animate-in fade-in duration-300"
+              className="pointer-events-none flex flex-col items-center justify-center"
             >
               <div className="relative flex items-center justify-center">
                 <div className="absolute w-12 h-12 rounded-full border border-emerald-400 bg-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.7)] animate-pulse" />
@@ -680,7 +676,7 @@ export const MapView: React.FC<MapViewProps> = ({
               </span>
             </div>
 
-            {/* Б) НЕЗАЛЕЖНИЙ МАРКЕР БАЗИ (КОЛИ ГРАВЕЦЬ ВІДІЙШОВ ВІД НЕЇ) */}
+            {/* Б) МАРКЕР БАЗОВОГО ТАБОРУ (КОЛИ ГРАВЕЦЬ НЕ В ТАБОРІ) */}
             {!isAtCamp && (
               <div
                 style={{
@@ -690,18 +686,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   transform: 'translate(-50%, -50%)',
                   zIndex: 30
                 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (hasMovedRef.current || expedition) return;
-                  setSelectedTarget({
-                    lat: campCoords.lat,
-                    lng: campCoords.lng,
-                    data: createSectorData(campCoords.lat, campCoords.lng, false, false, true, 'forest'),
-                    dist: distanceToCampMeters,
-                    isFog: false
-                  });
-                }}
-                className="pointer-events-auto flex flex-col items-center justify-center cursor-pointer transition-transform active:scale-90"
+                className="pointer-events-none flex flex-col items-center justify-center"
               >
                 <div className="relative flex items-center justify-center">
                   <div className="absolute w-12 h-12 rounded-full border border-emerald-400/90 bg-emerald-500/20 shadow-[0_0_20px_rgba(52,211,153,0.7)] animate-pulse" />
@@ -715,14 +700,10 @@ export const MapView: React.FC<MapViewProps> = ({
               </div>
             )}
 
-            {/* В) НАВКОЛИШНІ СЕКТОРИ (БЕЗ ДУБЛІВ ТАБОРУ ТА ГРАВЦЯ) */}
+            {/* В) НАВКОЛИШНІ СЕКТОРИ СВІТУ */}
             {visibleSectors.map((sector) => {
               if (sector.isFog || sector.isCurrent || (sector.isCampSector && !isAtCamp)) return null;
 
-              const isSelected = Boolean(
-                selectedTarget &&
-                calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 25
-              );
               const isDepleted = sector.searchState.isDepleted;
               const searchesLeft = sector.searchState.searchesLeft;
               const isPartiallySearched = searchesLeft < 4 && !isDepleted;
@@ -738,15 +719,11 @@ export const MapView: React.FC<MapViewProps> = ({
                     top: sector.screenY,
                     transform: 'translate(-50%, -50%)'
                   }}
-                  className={`pointer-events-auto flex flex-col items-center justify-center cursor-pointer transition-transform active:scale-90 ${
+                  className={`pointer-events-none flex flex-col items-center justify-center ${
                     isDimmedMemory ? 'opacity-55 filter saturate-50' : ''
                   }`}
                 >
                   <div className="relative flex items-center justify-center">
-                    {isSelected && (
-                      <div className="absolute w-11 h-11 rounded-full border-2 border-yellow-400 bg-yellow-400/15 shadow-[0_0_16px_rgba(250,204,21,0.7)] animate-in zoom-in-75 duration-150" />
-                    )}
-
                     {isTargetOfMarch && (
                       <div className="absolute w-10 h-10 rounded-full border border-amber-400 bg-amber-500/20 animate-ping" />
                     )}
@@ -776,8 +753,6 @@ export const MapView: React.FC<MapViewProps> = ({
                   <span className={`text-[8px] font-mono font-bold mt-0.5 leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${
                     isTargetOfMarch
                       ? 'text-amber-300'
-                      : isSelected
-                      ? 'text-yellow-300'
                       : isDepleted
                       ? 'text-rose-400'
                       : 'text-emerald-400/80'
@@ -788,31 +763,30 @@ export const MapView: React.FC<MapViewProps> = ({
               );
             })}
 
-            {/* Г) ЦІЛЬ У ТУМАНІ */}
-            {selectedTarget && selectedTarget.isFog && (
-              (() => {
-                const selWorld = latLngToWorldPixel(selectedTarget.lat, selectedTarget.lng, zoom);
-                const selSx = selWorld.x - cameraWorld.x + containerSize.width / 2;
-                const selSy = selWorld.y - cameraWorld.y + containerSize.height / 2;
-                return (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: selSx,
-                      top: selSy,
-                      transform: 'translate(-50%, -50%)'
-                    }}
-                    className="flex flex-col items-center pointer-events-none animate-in zoom-in-75 duration-150"
-                  >
-                    <div className="w-9 h-9 rounded-full border-2 border-amber-400 bg-amber-950/60 shadow-[0_0_15px_rgba(245,158,11,0.7)] flex items-center justify-center">
-                      <HelpCircle className="w-4 h-4 text-amber-300 animate-pulse" />
+            {/* Г) ЄДИНИЙ МАРКЕР ОБРАНОЇ ЦІЛІ (ЗАКРІПЛЕНИЙ СТРОГО НА СВОЇЙ ГЕОТОЧЦІ) */}
+            {selectedTargetScreen && !isSelectedCurrent && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: selectedTargetScreen.x,
+                  top: selectedTargetScreen.y,
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 28
+                }}
+                className="pointer-events-none flex flex-col items-center justify-center animate-in zoom-in-75 duration-150"
+              >
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-12 h-12 rounded-full border-2 border-yellow-400 bg-yellow-400/15 shadow-[0_0_16px_rgba(250,204,21,0.7)] animate-pulse" />
+                  {selectedTarget?.isFog && (
+                    <div className="relative z-10 w-8 h-8 rounded-full border border-amber-400 bg-amber-950/60 flex items-center justify-center">
+                      <HelpCircle className="w-4 h-4 text-amber-300" />
                     </div>
-                    <span className="text-[8px] text-amber-300 font-mono font-bold mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
-                      {selectedTarget.dist}м
-                    </span>
-                  </div>
-                );
-              })()
+                  )}
+                </div>
+                <span className="text-[8px] text-yellow-300 font-mono font-bold mt-1 bg-[#09120b]/90 px-1.5 py-0.5 rounded border border-yellow-500/80 shadow drop-shadow whitespace-nowrap">
+                  {selectedTarget?.dist}м
+                </span>
+              </div>
             )}
           </div>
         </div>
