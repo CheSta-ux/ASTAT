@@ -454,8 +454,8 @@ export const MapView: React.FC<MapViewProps> = ({
 
           <div className="absolute inset-0 bg-radial from-transparent via-[#060a07]/20 to-[#040605]/80 pointer-events-none z-0" />
 
-          {/* ТАКТИЧНА СІТКА 5x5 З ТУМАНОМ ВІЙНИ */}
-          <div className="absolute inset-0 grid grid-cols-5 p-1.5 gap-1.5 z-10">
+          {/* БЕЗШОВНА ТАКТИЧНА СІТКА З МОНОЛІТНИМ ТУМАНОМ ВІЙНИ */}
+          <div className="absolute inset-0 grid grid-cols-5 z-10 select-none">
             {visibleSectors.map((sector, idx) => {
               const isCampSector = calculateHaversineDistanceMeters(sector.lat, sector.lng, campCoords.lat, campCoords.lng) < 50;
               const isSelected = Boolean(
@@ -464,14 +464,13 @@ export const MapView: React.FC<MapViewProps> = ({
               );
               const isBlockedWater = Boolean(sector.data.isWaterBlocked);
               const isCoastSector = !isBlockedWater && sector.data.biomeType === 'water';
-              const biome = sector.classification.biome;
 
               const isDepleted = sector.searchState.isDepleted;
               const searchesLeft = sector.searchState.searchesLeft;
               const isPartiallySearched = searchesLeft < 4 && !isDepleted;
               const isTargetOfMarch = sector.isExpeditionDestination;
 
-              // --- СТАН 1: ТУМАН ВІЙНИ ---
+              // --- СТАН 1: СУЦІЛЬНИЙ ТУМАН ВІЙНИ (TERRA INCOGNITA) ---
               if (sector.isFog) {
                 return (
                   <div
@@ -486,40 +485,42 @@ export const MapView: React.FC<MapViewProps> = ({
                         isFog: true
                       });
                     }}
-                    className={`rounded border transition-all flex flex-col items-center justify-between p-1 relative cursor-pointer overflow-hidden group ${
-                      isTargetOfMarch
-                        ? 'bg-amber-950/70 border-amber-400 ring-2 ring-amber-400 animate-pulse'
-                        : isSelected
-                        ? 'bg-[#18261c] border-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.8)] ring-2 ring-yellow-400 scale-[1.02] z-20'
-                        : 'bg-[#040705]/95 border-[#152218]/90 hover:border-[#2f5436]'
+                    className={`flex flex-col items-center justify-between p-1 relative cursor-pointer transition-colors group ${
+                      isSelected
+                        ? 'bg-amber-950/40 ring-1 ring-yellow-400 shadow-[inset_0_0_12px_rgba(250,204,21,0.25)] z-20'
+                        : isTargetOfMarch
+                        ? 'bg-amber-950/50 ring-1 ring-amber-400 animate-pulse z-20'
+                        : 'bg-[#030604]/96 hover:bg-[#07120a]/90 backdrop-blur-[2px]'
                     }`}
                   >
-                    <div className="w-full flex items-center justify-between">
-                      <span className="text-[6px] text-[#4d6652] font-mono font-bold tracking-wider">???</span>
-                      <span className="text-[6px] text-[#334737] font-mono">FOW</span>
-                    </div>
+                    <div className="w-full h-3" />
 
-                    <div className="my-auto flex items-center justify-center opacity-40 group-hover:opacity-70 transition">
+                    {/* Центр: маркер маршу або ледь помітна точка радара при виборі */}
+                    <div className="my-auto flex items-center justify-center">
                       {isTargetOfMarch ? (
                         <Footprints className="w-4 h-4 text-amber-400 animate-bounce" />
+                      ) : isSelected ? (
+                        <HelpCircle className="w-4 h-4 text-amber-400/80 animate-pulse" />
                       ) : (
-                        <HelpCircle className="w-4 h-4 text-[#4f6e56]" />
+                        <div className="w-1 h-1 rounded-full bg-emerald-900/30 group-hover:bg-emerald-500/50 transition-colors" />
                       )}
                     </div>
 
-                    <div className="w-full text-center mt-auto">
-                      <div className="text-[7.5px] font-mono font-bold text-[#4e6b54] uppercase tracking-tight truncate">
-                        НЕРОЗВІДАНО
-                      </div>
-                      <div className="text-[7px] font-mono text-[#3d5742] leading-none">
+                    {/* Низ: дистанція з'являється при наведенні або виборі */}
+                    <div className="w-full text-center h-3 flex items-center justify-center">
+                      <span className={`text-[7.5px] font-mono leading-none transition-colors ${
+                        isSelected 
+                          ? 'text-amber-300 font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,1)]' 
+                          : 'text-[#2a4230] group-hover:text-emerald-400/80'
+                      }`}>
                         {sector.distanceMeters}м
-                      </div>
+                      </span>
                     </div>
                   </div>
                 );
               }
 
-              // --- СТАН 2: РОЗВІДАНИЙ / ЖИВИЙ СЕКТОР ---
+              // --- СТАН 2: РОЗВІДАНИЙ ЛАНДШАФТ (ПРОЗОРИЙ, БЕЗ РАМОК) ---
               const isDimmedMemory = !sector.isLiveRadar && sector.isEverExplored;
 
               return (
@@ -535,42 +536,25 @@ export const MapView: React.FC<MapViewProps> = ({
                       isFog: false
                     });
                   }}
-                  className={`rounded border transition-all flex flex-col items-center justify-between p-1 relative cursor-pointer overflow-hidden group ${
+                  className={`flex flex-col items-center justify-between p-1 relative cursor-pointer transition-all group ${
                     sector.isCurrent
-                      ? 'bg-emerald-950/50 border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.7)] ring-2 ring-emerald-400 backdrop-blur-[1px]'
+                      ? 'bg-emerald-500/10 ring-1 ring-emerald-400 shadow-[inset_0_0_12px_rgba(16,185,129,0.35)] z-20'
                       : isTargetOfMarch
-                      ? 'bg-amber-950/60 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.75)] ring-2 ring-amber-400 animate-pulse'
+                      ? 'bg-amber-500/15 ring-1 ring-amber-400 shadow-[inset_0_0_12px_rgba(245,158,11,0.4)] animate-pulse z-20'
                       : isSelected
-                      ? 'bg-amber-950/70 border-yellow-400 shadow-[0_0_14px_rgba(250,204,21,0.85)] ring-2 ring-yellow-400 scale-[1.02] z-20'
-                      : isCampSector
-                      ? 'bg-blue-950/45 border-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]'
-                      : isBlockedWater
-                      ? 'bg-cyan-950/70 border-cyan-500/80 hover:bg-cyan-900/80 hover:border-cyan-300'
-                      : isCoastSector
-                      ? 'bg-teal-950/50 border-teal-500/80 hover:bg-teal-900/60 hover:border-teal-300'
-                      : isDepleted
-                      ? 'bg-rose-950/30 border-rose-900/70 hover:border-rose-500/90'
-                      : biome === 'forest'
-                      ? 'bg-[#08170c]/70 border-[#254d30]/70 hover:border-emerald-400/90'
-                      : biome === 'field'
-                      ? 'bg-[#171609]/70 border-[#474320]/70 hover:border-yellow-400/90'
-                      : biome === 'mountain'
-                      ? 'bg-[#141212]/70 border-[#4a423f]/70 hover:border-stone-300'
-                      : 'bg-black/45 border-[#2f4935]/70 hover:bg-black/65 hover:border-emerald-400/90'
-                  } ${isDimmedMemory ? 'opacity-65 filter saturate-50' : ''}`}
+                      ? 'bg-yellow-400/15 ring-1 ring-yellow-400 shadow-[inset_0_0_14px_rgba(250,204,21,0.35)] z-20'
+                      : 'bg-transparent hover:bg-emerald-500/10'
+                  } ${isDimmedMemory ? 'opacity-55 filter saturate-50' : ''}`}
                 >
-                  <div className="w-full flex items-center justify-between leading-none">
+                  {/* Верхній куточок: мікро-статуси */}
+                  <div className="w-full flex items-center justify-between leading-none h-3 px-0.5">
                     <div>
-                      {isTargetOfMarch ? (
-                        <span className="text-[6px] text-amber-300 font-mono font-bold px-0.5 py-0.2 rounded bg-amber-950/95 border border-amber-500 flex items-center gap-0.5 animate-pulse">
-                          МАРШ
-                        </span>
-                      ) : isDepleted ? (
-                        <span className="text-[6px] text-rose-300 font-mono font-bold px-0.5 py-0.2 rounded bg-rose-950/95 border border-rose-600 flex items-center gap-0.5 shadow-sm">
-                          <Lock className="w-2 h-2 text-rose-400" /> ЗАЧИЩЕНО
+                      {isDepleted ? (
+                        <span className="text-[7px] text-rose-400 font-mono font-bold flex items-center gap-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
+                          <Lock className="w-2.5 h-2.5 text-rose-400" />
                         </span>
                       ) : isPartiallySearched ? (
-                        <span className="text-[6px] text-amber-300 font-mono font-bold px-0.5 py-0.2 rounded bg-amber-950/90 border border-amber-600">
+                        <span className="text-[7px] text-amber-300 font-mono font-bold px-0.5 rounded bg-black/60 border border-amber-600/70">
                           {searchesLeft}/4
                         </span>
                       ) : null}
@@ -578,41 +562,40 @@ export const MapView: React.FC<MapViewProps> = ({
 
                     <div className="flex items-center gap-0.5">
                       {isBlockedWater && (
-                        <span className="text-[6px] text-cyan-300 font-mono font-bold px-0.5 rounded bg-[#061118]/90 border border-cyan-700">
-                          ВОДА
-                        </span>
+                        <span className="text-[7px] text-cyan-300 drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">🌊</span>
                       )}
                       {isCoastSector && (
-                        <span className="text-[6px] text-teal-300 font-mono font-bold px-0.5 rounded bg-[#071714]/90 border border-teal-700">
-                          БЕРЕГ
-                        </span>
+                        <span className="text-[7px] text-teal-300 drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">⚓</span>
                       )}
                     </div>
                   </div>
 
-                  <div className="my-auto flex items-center justify-center drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+                  {/* Центр: виключно тактична мініатюра сектору */}
+                  <div className="my-auto flex items-center justify-center drop-shadow-[0_2px_5px_rgba(0,0,0,0.95)]">
                     {sector.isCurrent ? (
-                      <Crosshair className="w-4 h-4 md:w-5 md:h-5 text-emerald-300 animate-spin-slow" />
+                      <Crosshair className="w-5 h-5 text-emerald-300 animate-spin-slow drop-shadow-[0_0_8px_rgba(16,185,129,0.9)]" />
                     ) : isTargetOfMarch ? (
-                      <Footprints className="w-4 h-4 md:w-5 md:h-5 text-amber-300 animate-bounce" />
+                      <Footprints className="w-5 h-5 text-amber-300 animate-bounce drop-shadow-[0_0_8px_rgba(245,158,11,0.9)]" />
                     ) : isCampSector ? (
-                      <Tent className="w-4 h-4 md:w-5 md:h-5 text-emerald-400" />
+                      <Tent className="w-5 h-5 text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
                     ) : (
                       <SectorTacticalIcon icon={sector.data.icon} className="w-4 h-4 md:w-5 md:h-5" />
                     )}
                   </div>
 
-                  <div className="w-full text-center mt-auto">
-                    <div className="text-[8px] md:text-[9.5px] font-bold font-mono text-slate-100 uppercase tracking-tight truncate px-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
-                      {sector.isCurrent ? 'ВИ ТУТ' : isCampSector ? 'ТАБІР' : (sector.data.shortName || sector.data.name)}
-                    </div>
-
-                    <div className="text-[7px] md:text-[8px] font-mono leading-none flex items-center justify-center gap-1 drop-shadow-[0_1px_1px_rgba(0,0,0,1)]">
-                      <span className={isTargetOfMarch ? 'text-amber-400 font-bold' : isDepleted ? 'text-rose-400' : 'text-emerald-400'}>
-                        {sector.distanceMeters > 0 ? `${sector.distanceMeters}м` : `0м`}
-                      </span>
-                      {isDepleted && <span className="text-rose-400">🔒</span>}
-                    </div>
+                  {/* Низ: виключно дистанція (без зайвого тексту) */}
+                  <div className="w-full text-center h-3 flex items-center justify-center">
+                    <span className={`text-[7.5px] md:text-[8.5px] font-mono font-bold drop-shadow-[0_1px_3px_rgba(0,0,0,1)] ${
+                      sector.isCurrent
+                        ? 'text-emerald-300'
+                        : isTargetOfMarch
+                        ? 'text-amber-300'
+                        : isDepleted
+                        ? 'text-rose-400'
+                        : 'text-emerald-400'
+                    }`}>
+                      {sector.distanceMeters > 0 ? `${sector.distanceMeters}м` : '0м'}
+                    </span>
                   </div>
                 </div>
               );
