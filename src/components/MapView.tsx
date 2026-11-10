@@ -70,7 +70,6 @@ const worldPixelToLatLng = (x: number, y: number, zoom: number) => {
   return { lat, lng };
 };
 
-// Запас виступу полотна туману за межі контейнера для уникнення будь-яких щілин
 const FOG_OVERFLOW = 48;
 
 export const MapView: React.FC<MapViewProps> = ({
@@ -90,7 +89,6 @@ export const MapView: React.FC<MapViewProps> = ({
 }) => {
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
-
   const [panPx, setPanPx] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -124,6 +122,16 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => observer.disconnect();
   }, []);
 
+  // Базовий крок одного 100м сектора в градусах (для точного прив'язування до сітки)
+  const gridStep = useMemo(() => {
+    const stepN = offsetGeoBySectors(campCoords.lat, campCoords.lng, 0, 1);
+    const stepE = offsetGeoBySectors(campCoords.lat, campCoords.lng, 1, 0);
+    return {
+      dLat: stepN.lat - campCoords.lat,
+      dLng: stepE.lng - campCoords.lng
+    };
+  }, [campCoords.lat, campCoords.lng]);
+
   const playerWorld = useMemo(() => latLngToWorldPixel(coords.lat, coords.lng, zoom), [coords.lat, coords.lng]);
   const campWorld = useMemo(() => latLngToWorldPixel(campCoords.lat, campCoords.lng, zoom), [campCoords.lat, campCoords.lng]);
 
@@ -137,7 +145,16 @@ export const MapView: React.FC<MapViewProps> = ({
     [cameraWorld.x, cameraWorld.y]
   );
 
-  // Динамічний буфер тайлів OpenTopoMap для поточного в'юпорта (+300px запасу)
+  // Індекс центрального сектора під камерою (дискретний крок)
+  const cameraGridCenter = useMemo(() => {
+    if (!gridStep.dLat || !gridStep.dLng) return { gx: 0, gy: 0 };
+    return {
+      gx: Math.round((cameraLatLng.lng - campCoords.lng) / gridStep.dLng),
+      gy: Math.round((cameraLatLng.lat - campCoords.lat) / gridStep.dLat)
+    };
+  }, [cameraLatLng.lat, cameraLatLng.lng, campCoords.lat, campCoords.lng, gridStep]);
+
+  // Тайли OpenTopoMap (динамічно покривають увесь екран під час перетягування)
   const visibleTiles = useMemo(() => {
     const halfW = containerSize.width / 2;
     const halfH = containerSize.height / 2;
@@ -167,31 +184,41 @@ export const MapView: React.FC<MapViewProps> = ({
     return tiles;
   }, [cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
 
-  // Сектори генеруються навколо точки огляду камери (щоб вони існували скрізь, куди зсунуто огляд)
+  // Генерація секторів на фіксованій глобальній сітці (завжди прив'язана до campCoords)
   const sectorList = useMemo(() => {
     const list = [];
-    for (let dy = 4; dy >= -4; dy--) {
-      for (let dx = -4; dx <= 4; dx++) {
-        const geo = offsetGeoBySectors(cameraLatLng.lat, cameraLatLng.lng, dx, dy);
+    const radius = 5;
+    for (let dy = cameraGridCenter.gy + radius; dy >= cameraGridCenter.gy - radius; dy--) {
+      for (let dx = cameraGridCenter.gx - radius; dx <= cameraGridCenter.gx + radius; dx++) {
+        const geo = offsetGeoBySectors(campCoords.lat, campCoords.lng, dx, dy);
         list.push({
-          dx,
-          dy,
-          lat: geo.lat,
-          lng: geo.lng,
+          gx: dx,
+          gy: dy,
+          lat: Number(geo.lat.toFixed(5)),
+          lng: Number(geo.lng.toFixed(5)),
           key: `${geo.lat.toFixed(5)}-${geo.lng.toFixed(5)}`
         });
       }
     }
     return list;
-  }, [cameraLatLng.lat, cameraLatLng.lng]);
+  }, [campCoords.lat, campCoords.lng, cameraGridCenter.gx, cameraGridCenter.gy]);
 
+  // Запит на воду запускається тільки тоді, коли реально змінюється дискретна сітка (з дебаунсом)
   useEffect(() => {
     let isMounted = true;
-    detectGridWater(sectorList).then((results: Record<string, SectorTerrainData>) => {
-      if (isMounted) setRadarMap(results);
-    });
-    return () => { isMounted = false; };
-  }, [cameraLatLng.lat, cameraLatLng.lng, sectorList]);
+    const timer = setTimeout(() => {
+      detectGridWater(sectorList).then((results: Record<string, SectorTerrainData>) => {
+        if (isMounted && results) {
+          setRadarMap((prev) => ({ ...prev, ...results }));
+        }
+      }).catch((err) => console.warn('Water detector service notice:', err));
+    }, 150);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [sectorList]);
 
   const expeditionTargetCoords = useMemo(() => {
     if (!expedition) return null;
@@ -203,20 +230,10 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
 
-  // Розрахунок відстані до табору
   const distanceToCampMeters = useMemo(() => {
     return Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng));
   }, [coords.lat, coords.lng, campCoords.lat, campCoords.lng]);
   const isAtCamp = distanceToCampMeters < 50;
-
-  // Екранні координати бази
-  const campScreenX = campWorld.x - cameraWorld.x + containerSize.width / 2;
-  const campScreenY = campWorld.y - cameraWorld.y + containerSize.height / 2;
-  const isCampOnScreen = 
-    campScreenX >= -50 && 
-    campScreenX <= containerSize.width + 50 && 
-    campScreenY >= -50 && 
-    campScreenY <= containerSize.height + 50;
 
   const visibleSectors = useMemo(() => {
     return sectorList.map((sec) => {
@@ -232,7 +249,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const classification = radarMap[sec.key] || {
         isWater: false,
         isCoast: false,
-        biome: 'urban',
+        biome: 'forest',
         elevation: null
       };
 
@@ -264,14 +281,15 @@ export const MapView: React.FC<MapViewProps> = ({
         isFog,
         isExpeditionDestination,
         isCurrent: isCurrentPlayerPos,
-        distanceMeters: distFromPlayer,
+        isCampSector,
+        distanceMeters: Math.round(distFromPlayer),
         screenX,
         screenY
       };
     });
   }, [sectorList, coords, campCoords, exploredSet, radarMap, sectorSearches, currentTime, expeditionTargetCoords, cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
 
-  // ================= РЕНДЕРИНГ БЕЗШОВНОГО ТУМАНУ ВІЙНИ (CANVAS + OVERFLOW) =================
+  // Рендеринг туману війни на Canvas з виступом FOG_OVERFLOW
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -283,37 +301,37 @@ export const MapView: React.FC<MapViewProps> = ({
     canvas.width = w;
     canvas.height = h;
 
-    // 1. Суцільне покриття темрявою із запасом за межами в'юпорта
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#030704';
     ctx.fillRect(0, 0, w, h);
 
-    // 2. Режим вирізання розвіданих зон
     ctx.globalCompositeOperation = 'destination-out';
 
-    // Розвідані сектори
+    // Розкриття раніше розвіданих секторів
     exploredSectors.forEach((key) => {
-      const [latStr, lngStr] = key.split('-');
-      const sLat = parseFloat(latStr);
-      const sLng = parseFloat(lngStr);
-      if (!isNaN(sLat) && !isNaN(sLng)) {
-        const wPos = latLngToWorldPixel(sLat, sLng, zoom);
-        const sx = wPos.x - cameraWorld.x + containerSize.width / 2 + FOG_OVERFLOW;
-        const sy = wPos.y - cameraWorld.y + containerSize.height / 2 + FOG_OVERFLOW;
+      const parts = key.split('-');
+      if (parts.length >= 2) {
+        const sLat = parseFloat(parts[0]);
+        const sLng = parseFloat(parts[1]);
+        if (!isNaN(sLat) && !isNaN(sLng)) {
+          const wPos = latLngToWorldPixel(sLat, sLng, zoom);
+          const sx = wPos.x - cameraWorld.x + containerSize.width / 2 + FOG_OVERFLOW;
+          const sy = wPos.y - cameraWorld.y + containerSize.height / 2 + FOG_OVERFLOW;
 
-        if (sx > -100 && sx < w + 100 && sy > -100 && sy < h + 100) {
-          const grad = ctx.createRadialGradient(sx, sy, 10, sx, sy, 75);
-          grad.addColorStop(0, 'rgba(0,0,0,0.7)');
-          grad.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(sx, sy, 75, 0, Math.PI * 2);
-          ctx.fill();
+          if (sx > -100 && sx < w + 100 && sy > -100 && sy < h + 100) {
+            const grad = ctx.createRadialGradient(sx, sy, 10, sx, sy, 75);
+            grad.addColorStop(0, 'rgba(0,0,0,0.7)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 75, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
     });
 
-    // Відкриття бази табору (завжди розкрито як безпечний прихисток)
+    // Розкриття базового табору
     const campPos = latLngToWorldPixel(campCoords.lat, campCoords.lng, zoom);
     const campSx = campPos.x - cameraWorld.x + containerSize.width / 2 + FOG_OVERFLOW;
     const campSy = campPos.y - cameraWorld.y + containerSize.height / 2 + FOG_OVERFLOW;
@@ -325,7 +343,7 @@ export const MapView: React.FC<MapViewProps> = ({
     ctx.arc(campSx, campSy, 95, 0, Math.PI * 2);
     ctx.fill();
 
-    // Відкриття активного тактичного радара навколо гравця
+    // Розкриття зони навколо гравця
     const pPos = latLngToWorldPixel(coords.lat, coords.lng, zoom);
     const pSx = pPos.x - cameraWorld.x + containerSize.width / 2 + FOG_OVERFLOW;
     const pSy = pPos.y - cameraWorld.y + containerSize.height / 2 + FOG_OVERFLOW;
@@ -346,7 +364,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const currentClassification = radarMap[currentSectorKey] || {
     isWater: false,
     isCoast: false,
-    biome: 'urban',
+    biome: 'forest',
     elevation: null
   };
 
@@ -396,7 +414,7 @@ export const MapView: React.FC<MapViewProps> = ({
     const coveredMeters = Math.max(0, totalMeters - remainingMeters);
 
     const destKey = `${expeditionTargetCoords.lat.toFixed(5)}-${expeditionTargetCoords.lng.toFixed(5)}`;
-    const destClassification = radarMap[destKey] || { isWater: false, isCoast: false, biome: 'urban', elevation: null };
+    const destClassification = radarMap[destKey] || { isWater: false, isCoast: false, biome: 'forest', elevation: null };
     const destData = createSectorData(
       expeditionTargetCoords.lat,
       expeditionTargetCoords.lng,
@@ -416,7 +434,7 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition, expeditionTargetCoords, coords, radarMap]);
 
-  // ================= ОБРОБКА ПАНУВАННЯ ТА КЛІКІВ =================
+  // Обробка жестів миші та тачскріна
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     isDraggingRef.current = true;
@@ -463,6 +481,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   };
 
+  // Клік на карту: завжди прив'язується до реального сектора глобальної сітки
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (hasMovedRef.current || expedition) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -473,21 +492,9 @@ export const MapView: React.FC<MapViewProps> = ({
     const clickWorldY = cameraWorld.y - containerSize.height / 2 + clickScreenY;
     const clickGeo = worldPixelToLatLng(clickWorldX, clickWorldY, zoom);
 
-    // Якщо клік біля бази
-    if (Math.hypot(campScreenX - clickScreenX, campScreenY - clickScreenY) < 32) {
-      setSelectedTarget({
-        lat: campCoords.lat,
-        lng: campCoords.lng,
-        data: createSectorData(campCoords.lat, campCoords.lng, false, false, true, 'urban'),
-        dist: distanceToCampMeters,
-        isFog: false
-      });
-      return;
-    }
-
-    // Перевіряємо сектори
-    let nearest = visibleSectors.find(
-      (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 36
+    // Шукаємо сектор серед видимих, якщо клікнули поруч із маркером
+    const nearest = visibleSectors.find(
+      (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 32
     );
 
     if (nearest) {
@@ -498,16 +505,37 @@ export const MapView: React.FC<MapViewProps> = ({
         dist: nearest.distanceMeters,
         isFog: nearest.isFog
       });
-    } else {
-      const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, clickGeo.lat, clickGeo.lng));
-      setSelectedTarget({
-        lat: Number(clickGeo.lat.toFixed(5)),
-        lng: Number(clickGeo.lng.toFixed(5)),
-        data: createSectorData(clickGeo.lat, clickGeo.lng, false, false, false, 'urban'),
-        dist,
-        isFog: true
-      });
+      return;
     }
+
+    // Якщо клікнули в глибину туману: обчислюємо точний дискретний сектор сітки
+    if (!gridStep.dLat || !gridStep.dLng) return;
+    const targetGy = Math.round((clickGeo.lat - campCoords.lat) / gridStep.dLat);
+    const targetGx = Math.round((clickGeo.lng - campCoords.lng) / gridStep.dLng);
+
+    const snappedGeo = offsetGeoBySectors(campCoords.lat, campCoords.lng, targetGx, targetGy);
+    const snappedLat = Number(snappedGeo.lat.toFixed(5));
+    const snappedLng = Number(snappedGeo.lng.toFixed(5));
+    const snappedKey = `${snappedLat.toFixed(5)}-${snappedLng.toFixed(5)}`;
+
+    const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, snappedLat, snappedLng));
+    const isCamp = calculateHaversineDistanceMeters(snappedLat, snappedLng, campCoords.lat, campCoords.lng) < 50;
+    const isFog = !exploredSet.has(snappedKey) && dist > 160 && !isCamp;
+
+    const classification = radarMap[snappedKey] || {
+      isWater: false,
+      isCoast: false,
+      biome: 'forest',
+      elevation: null
+    };
+
+    setSelectedTarget({
+      lat: snappedLat,
+      lng: snappedLng,
+      data: createSectorData(snappedLat, snappedLng, classification.isWater, classification.isCoast, isCamp, classification.biome),
+      dist,
+      isFog
+    });
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -521,7 +549,6 @@ export const MapView: React.FC<MapViewProps> = ({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
-      {/* ЛІВА ПАНЕЛЬ: ПОВНОРОЗМІРНА МАПА */}
       <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative min-h-[540px] lg:min-h-[660px]">
         
         {/* Верхня панель: GPS, База та Центрування */}
@@ -546,7 +573,6 @@ export const MapView: React.FC<MapViewProps> = ({
               </button>
             )}
 
-            {/* Клікабельна кнопка швидкого панорамування до Бази */}
             <button
               type="button"
               onClick={() => {
@@ -564,7 +590,7 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
 
-        {/* ПОВНОРОЗМІРНИЙ КОНТЕЙНЕР МАПИ */}
+        {/* Контейнер мапи */}
         <div 
           ref={containerRef}
           onPointerDown={handlePointerDown}
@@ -575,7 +601,7 @@ export const MapView: React.FC<MapViewProps> = ({
           onWheel={handleWheel}
           className="relative w-full flex-1 rounded-lg overflow-hidden border border-[#1b2b20] bg-[#030604] shadow-inner select-none touch-none cursor-grab active:cursor-grabbing"
         >
-          {/* 1. БЕЗШОВНИЙ ШАР OPENTOPOMAP */}
+          {/* 1. Безшовні тайли OpenTopoMap */}
           <div className="absolute inset-0 pointer-events-none">
             {visibleTiles.map((t) => (
               <img
@@ -593,7 +619,7 @@ export const MapView: React.FC<MapViewProps> = ({
             ))}
           </div>
 
-          {/* 2. ШАР ТУМАНУ ВІЙНИ (CANVAS ІЗ ЗАХИСТНИМ ВИСТУПОМ FOG_OVERFLOW) */}
+          {/* 2. Шар туману війни (Canvas із запасом FOG_OVERFLOW) */}
           <canvas
             ref={canvasRef}
             style={{
@@ -606,49 +632,11 @@ export const MapView: React.FC<MapViewProps> = ({
             className="pointer-events-none z-10 opacity-95"
           />
 
-          {/* 3. ТАКТИЧНІ МАРКЕРИ */}
+          {/* 3. Маркери секторів (без дублювань) */}
           <div className="absolute inset-0 pointer-events-none z-20">
-            
-            {/* А) ПОСТІЙНИЙ МАРКЕР БАЗОВОГО ТАБОРУ (ЗАВЖДИ ПРИСУТНІЙ НА СВОЇХ GPS) */}
-            {isCampOnScreen && !isAtCamp && (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: campScreenX,
-                  top: campScreenY,
-                  transform: 'translate(-50%, -50%)',
-                  zIndex: 25
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (hasMovedRef.current || expedition) return;
-                  setSelectedTarget({
-                    lat: campCoords.lat,
-                    lng: campCoords.lng,
-                    data: createSectorData(campCoords.lat, campCoords.lng, false, false, true, 'urban'),
-                    dist: distanceToCampMeters,
-                    isFog: false
-                  });
-                }}
-                className="pointer-events-auto flex flex-col items-center justify-center cursor-pointer transition-transform active:scale-90"
-              >
-                <div className="relative flex items-center justify-center">
-                  <div className="absolute w-12 h-12 rounded-full border border-emerald-400/90 bg-emerald-500/20 shadow-[0_0_20px_rgba(52,211,153,0.7)] animate-pulse" />
-                  <div className="relative z-10 p-2 rounded-full bg-[#08150d] border border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.8)]">
-                    <Tent className="w-5 h-5 text-emerald-300" />
-                  </div>
-                </div>
-                <span className="text-[8px] font-mono font-bold text-emerald-300 bg-[#06120a]/90 px-1.5 py-0.2 rounded border border-emerald-700/80 mt-1 shadow drop-shadow">
-                  ТАБІР ({distanceToCampMeters}м)
-                </span>
-              </div>
-            )}
-
-            {/* Б) МАРКЕРИ РОЗВІДАНИХ СЕКТОРІВ ТА ГРАВЦЯ */}
             {visibleSectors.map((sector) => {
               if (sector.isFog) return null;
 
-              const isCampSector = calculateHaversineDistanceMeters(sector.lat, sector.lng, campCoords.lat, campCoords.lng) < 50;
               const isSelected = Boolean(
                 selectedTarget &&
                 calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 25
@@ -691,14 +679,14 @@ export const MapView: React.FC<MapViewProps> = ({
 
                     <div className="relative z-10 flex items-center justify-center p-1.5 drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">
                       {sector.isCurrent ? (
-                        isAtCamp ? (
+                        sector.isCampSector ? (
                           <Tent className="w-5 h-5 text-emerald-300" />
                         ) : (
                           <Crosshair className="w-5 h-5 text-emerald-300 animate-spin-slow" />
                         )
                       ) : isTargetOfMarch ? (
                         <Footprints className="w-5 h-5 text-amber-300 animate-bounce" />
-                      ) : isCampSector ? (
+                      ) : sector.isCampSector ? (
                         <Tent className="w-5 h-5 text-emerald-400" />
                       ) : (
                         <SectorTacticalIcon icon={sector.data.icon} className="w-5 h-5" />
@@ -726,17 +714,19 @@ export const MapView: React.FC<MapViewProps> = ({
                       ? 'text-amber-300'
                       : isSelected
                       ? 'text-yellow-300'
+                      : sector.isCampSector
+                      ? 'text-emerald-400 font-bold'
                       : isDepleted
                       ? 'text-rose-400'
                       : 'text-emerald-400/80'
                   }`}>
-                    {sector.isCurrent ? (isAtCamp ? 'ТАБІР (ВИ ТУТ)' : '0м') : `${sector.distanceMeters}м`}
+                    {sector.isCurrent ? (sector.isCampSector ? 'ТАБІР' : '0м') : sector.isCampSector ? 'ТАБІР' : `${sector.distanceMeters}м`}
                   </span>
                 </div>
               );
             })}
 
-            {/* В) МАРКЕР ОБРАНОЇ ТОЧКИ В ТУМАНІ */}
+            {/* Вибір цілі розвідки в тумані */}
             {selectedTarget && selectedTarget.isFog && (
               (() => {
                 const selWorld = latLngToWorldPixel(selectedTarget.lat, selectedTarget.lng, zoom);
@@ -765,14 +755,14 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
 
-        {/* МОБІЛЬНИЙ ВІДЖЕТ ШВИДКОЇ ДІЇ ПІД МАПОЮ */}
+        {/* Мобільний віджет швидкої дії */}
         <div className="lg:hidden mt-2 z-30">
           {!expedition && selectedTarget && !isSelectedCurrent && routeEstimates && (
             <div className="p-2.5 bg-[#121c15] border border-amber-500/80 rounded-lg shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-bottom-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 truncate">
                   <span className="text-amber-400 font-bold text-xs truncate">
-                    {selectedTarget.isFog ? 'Нерозвіданий сектор (Туман)' : selectedTarget.data.name}
+                    {selectedTarget.isFog ? 'Розвідка невідомого сектора' : selectedTarget.data.name}
                   </span>
                   <span className="text-[10px] text-[#8ea894] font-mono shrink-0">({routeEstimates.meters}м)</span>
                 </div>
@@ -840,7 +830,7 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       </div>
 
-      {/* ПРАВА ПАНЕЛЬ ДЕТАЛЕЙ */}
+      {/* Права панель деталей */}
       <div className="bg-[#101712] border border-[#233327] rounded-lg p-4 flex flex-col justify-between shadow-xl">
         {expedition && transitProgress ? (
           <div className="flex flex-col justify-between h-full space-y-4 animate-in fade-in duration-300">
@@ -1001,7 +991,7 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         )}
 
-        {/* НИЖНЯ ДЕТАЛЬНА КАРТКА ДЛЯ ДЕСКТОПУ */}
+        {/* Детальна інформація про обраний сектор */}
         {!expedition && selectedTarget ? (
           isSelectedCurrent ? (
             <div className="mt-4 pt-3 border-t border-[#233327] bg-[#141d16] p-3 rounded border border-[#2c4232]">
@@ -1021,7 +1011,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 {selectedTarget.isFog ? 'РОЗВІДКА НЕВІДОМОЇ ЗОНИ' : 'ПРОРАХУНОК МАРШУ (4.5 КМ/ГОД)'}
               </div>
               <div className="text-xs font-bold text-slate-100 mt-0.5 flex items-center justify-between">
-                <span>{selectedTarget.isFog ? 'Нерозвідана територія' : selectedTarget.data.name}</span>
+                <span>{selectedTarget.isFog ? 'Нерозвіданий сектор' : selectedTarget.data.name}</span>
                 {selectedTarget.data.isWaterBlocked && (
                   <span className="text-[10px] text-cyan-400 flex items-center gap-1">
                     <Waves className="w-3.5 h-3.5" /> Глибока вода
@@ -1084,7 +1074,7 @@ export const MapView: React.FC<MapViewProps> = ({
           ) : null
         ) : !expedition ? (
           <div className="mt-4 pt-3 border-t border-[#233327] text-center text-xs text-[#5f7564]">
-            Оберіть точку або нерозвідану зону на мапі для маршу
+            Оберіть мітку або ділянку туману на мапі для прорахунку маршу
           </div>
         ) : null}
       </div>
