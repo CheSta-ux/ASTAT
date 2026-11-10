@@ -331,17 +331,56 @@ export default function App() {
   }, [isUnconscious, activeTab]);
 
   // Дія 1: Гукати про допомогу в радіоефір (SOS)
+  // Стан кулдауну для крику про допомогу (60 секунд)
+  const [sosCooldown, setSosCooldown] = useState<number>(0);
+
+  // Таймер зворотного відліку кожну секунду
+  useEffect(() => {
+    if (sosCooldown <= 0) return;
+    const interval = setInterval(() => {
+      setSosCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sosCooldown]);
+
+  // Дія 1: Гукати про допомогу (тільки крик гравця з кулдауном 1 хв)
   const handleCallForHelp = async () => {
-    const sosMsg = `🚨 SOS! Виживанець ${player.callsign || player.name} впав без свідомості у секторі GPS: ${coords.lat.toFixed(4)}°, ${coords.lng.toFixed(4)}°! Потрібна термінова медична допомога!`;
-    await handleSendMessage(sosMsg, 'frequency', '104.2');
-    notify('📢 Сигнал SOS передано в загальний радіоефір!', 'warn');
+    if (sosCooldown > 0) {
+      notify(`Зв'язки перенапружені! Зачекайте ще ${sosCooldown} с перед наступним криком.`, 'warn');
+      return;
+    }
+
+    const coordsStr = `${coords.lat.toFixed(4)}°, ${coords.lng.toFixed(4)}°`;
+    const localSectorTarget = `${coords.lat.toFixed(3)}-${coords.lng.toFixed(3)}`;
+    const senderName = player.callsign || player.name;
+
+    const screamText = `🚨 [КРИК ПРО ДОПОМОГУ]: "Я поранений в секторі ${coordsStr}! Допоможіть хто-небудь!"`;
+
+    // Миттєве відображення в поточному вікні чату
+    const optimisticMsg: RadioMessage = {
+      id: Date.now(),
+      createdAt: Date.now(),
+      sender: senderName,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      text: screamText,
+      type: 'local',
+      target: localSectorTarget
+    };
+    setRadioMessages((prev) => [optimisticMsg, ...prev]);
+
+    // Відправка в базу даних для інших виживанців поруч
+    await handleSendMessage(screamText, 'local', localSectorTarget);
+
+    // Запуск обмеження на 60 секунд
+    setSosCooldown(60);
+
+    notify('📢 Крик про допомогу рознісся сектором! (Кулдаун: 60с)', 'warn');
     setActiveTab('radio');
   };
 
   // Дія 2: Здатись (миттєва загибель)
   const handleSurrender = () => {
     const lostItemsCount = inventory.reduce((sum, item) => sum + item.count, 0);
-    const lostCoins = player.astatCoins;
 
     const respawnCoords = { ...campCoords };
     setCoords(respawnCoords);
@@ -361,7 +400,7 @@ export default function App() {
     syncGameState(respawnedPlayer, [], respawnCoords);
 
     notify(
-      `💀 Ви здалися та загинули. ${lostItemsCount} предметів спорядження залишилося на секторі, а ${lostCoins} плат згоріли. Ви опритомніли біля вогнища у таборі.`,
+      `💀 Ви здалися та загинули. ${lostItemsCount} предметів спорядження залишилося на секторі.`,
       'danger'
     );
     setActiveTab('map');
