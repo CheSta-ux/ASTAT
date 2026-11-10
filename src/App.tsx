@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle } from 'lucide-react';
 
 import type { Coordinates, ExpeditionState, InventoryItem, PlayerStats, RadioMessage, TabType } from './types/game';
-import { calculateRealisticTravelTime, calculateHaversineDistanceMeters } from './utils/coordinates';
+import { calculateRealisticTravelTime, calculateHaversineDistanceMeters, offsetGeoBySectors } from './utils/coordinates';
 import { createSectorData } from './utils/sectorGenerator';
 import { useGameLoop } from './hooks/useGameLoop';
 import { 
@@ -39,6 +39,18 @@ interface GameToast {
   type: 'info' | 'warn' | 'danger' | 'success';
 }
 
+// Допоміжна функція відкриття секторів навколо заданих координат (радіус 1 сектор)
+const getSurroundingSectorKeys = (lat: number, lng: number): string[] => {
+  const keys: string[] = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const geo = offsetGeoBySectors(lat, lng, dx, dy);
+      keys.push(`${geo.lat.toFixed(5)}-${geo.lng.toFixed(5)}`);
+    }
+  }
+  return keys;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('map');
   const [showAfkModal, setShowAfkModal] = useState(false);
@@ -49,6 +61,9 @@ export default function App() {
   const [notifications, setNotifications] = useState<GameToast[]>([]);
 
   const [sectorSearches, setSectorSearches] = useState<Record<string, SectorSearchRecord>>(loadSectorSearchHistory);
+
+  // Розвідані сектори (персональний туман війни)
+  const [exploredSectors, setExploredSectors] = useState<string[]>([]);
 
   // Гравець
   const [player, setPlayer] = useState<PlayerStats>({
@@ -78,7 +93,6 @@ export default function App() {
     { id: 3, createdAt: Date.now(), sender: 'Бродяга_99', time: '11:58', text: 'Хто біля закинутого порту? Залишив схрон під іржавим краном.', type: 'local', target: '51.408-30.063' }
   ]);
 
-  // Захисний реф від дублювання однакових сповіщень
   const lastNotificationRef = useRef<{ msg: string; time: number }>({ msg: '', time: 0 });
 
   const notify = useCallback((msg: string, type: 'info' | 'warn' | 'danger' | 'success' = 'info') => {
@@ -100,7 +114,8 @@ export default function App() {
     overridePlayer?: PlayerStats,
     overrideInventory?: InventoryItem[],
     overrideCoords?: Coordinates,
-    overrideCamp?: Coordinates
+    overrideCamp?: Coordinates,
+    overrideExplored?: string[]
   ) => {
     const localPlayerId = localStorage.getItem('astat_player_id');
     if (!localPlayerId) return;
@@ -109,6 +124,7 @@ export default function App() {
     const curInv = overrideInventory || inventory;
     const curCoords = overrideCoords || coords;
     const curCamp = overrideCamp || campCoords;
+    const curExplored = overrideExplored || exploredSectors;
 
     const payload: any = {
       id: localPlayerId,
@@ -124,15 +140,15 @@ export default function App() {
       camp_lng: curCamp.lng,
       conditions: curPlayer.conditions,
       inventory: curInv,
+      explored_sectors: curExplored,
       updated_at: new Date().toISOString()
     };
 
     try {
       const { error } = await supabase.from('players').upsert(payload);
       if (error) {
-        // Якщо колонки inventory ще немає у схемі Supabase, зберігаємо без неї
-        if (error.message?.includes('inventory') || error.code === 'PGRST204') {
-          delete payload.inventory;
+        if (error.message?.includes('explored_sectors')) {
+          delete payload.explored_sectors;
           await supabase.from('players').upsert(payload);
         } else {
           console.warn('Supabase sync warning:', error.message);
@@ -141,9 +157,9 @@ export default function App() {
     } catch (err) {
       console.warn('Network sync error:', err);
     }
-  }, [player, inventory, coords, campCoords]);
+  }, [player, inventory, coords, campCoords, exploredSectors]);
 
-  // --- ВІДНОВЛЕННЯ ДАНИХ ПРИ ЗАПУСКУ / F5 ---
+  // --- ВІДНОВЛЕННЯ ДАНИХ ПРИ СТАРТІ ---
   useEffect(() => {
     const localPlayerId = localStorage.getItem('astat_player_id');
     if (!localPlayerId) return;
@@ -168,7 +184,7 @@ export default function App() {
             astatCoins: data.microchips ?? 0,
             searchesLeft: 4,
             conditions: data.conditions || ['comfort'],
-            exploredCount: 0
+            exploredCount: data.explored_sectors?.length || 0
           }));
 
           if (data.lat && data.lng) {
@@ -179,6 +195,11 @@ export default function App() {
           }
           if (data.inventory && Array.isArray(data.inventory) && data.inventory.length > 0) {
             setInventory(data.inventory);
+          }
+          if (data.explored_sectors && Array.isArray(data.explored_sectors)) {
+            setExploredSectors(data.explored_sectors);
+          } else if (data.lat && data.lng) {
+            setExploredSectors(getSurroundingSectorKeys(data.lat, data.lng));
           }
           setHasCompletedOnboarding(true);
         }
@@ -194,7 +215,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [hasCompletedOnboarding, syncGameState]);
 
-  // Завантаження радіоефіру та Realtime
+  // Радіоефір та Realtime
   useEffect(() => {
     supabase
       .from('radio_messages')
@@ -247,7 +268,6 @@ export default function App() {
     };
   }, []);
 
-  // Очищення локальних повідомлень, старіших за 60 секунд
   useEffect(() => {
     const timer = setInterval(() => {
       const cutoff = Date.now() - 60000;
@@ -281,6 +301,11 @@ export default function App() {
     setSelectedTarget(null);
     setExpedition(null);
 
+    // Розкриваємо сектори навколо нової точки від туману війни
+    const newRevealed = getSurroundingSectorKeys(destCoords.lat, destCoords.lng);
+    const nextExplored = Array.from(new Set([...exploredSectors, ...newRevealed]));
+    setExploredSectors(nextExplored);
+
     let updatedPlayer: PlayerStats = { ...player };
 
     setPlayer((prev) => {
@@ -307,17 +332,17 @@ export default function App() {
         hunger: newHunger,
         searchesLeft: searchStatus.searchesLeft,
         conditions,
-        exploredCount: prev.exploredCount + 1
+        exploredCount: nextExplored.length
       };
       return updatedPlayer;
     });
 
-    syncGameState(updatedPlayer, undefined, destCoords);
+    syncGameState(updatedPlayer, undefined, destCoords, undefined, nextExplored);
 
     if (searchStatus.isDepleted) {
       notify(`Сектор: ${destSector.name}. Ресурси вичерпано (24г)!`, 'warn');
     } else {
-      notify(`Прибуття: ${destSector.name} (Пошуків: ${searchStatus.searchesLeft}/4)`, 'success');
+      notify(`Прибуття: ${destSector.name} (Розкрито нові сектори!)`, 'success');
     }
   };
 
@@ -397,23 +422,16 @@ export default function App() {
     let nextPlayer = { ...player, searchesLeft: nextSearchesLeft, hunger: nextHunger };
     let nextInventory = [...inventory];
 
-    // Єдиний чесний розподіл подій обшуку:
-    // 60% — знахідка луту з бази Supabase
-    // 20% — поранення / пастка
-    // 20% — сектор порожній
     const roll = Math.random();
 
     if (roll < 0.60) {
       const foundItem = getRandomLoot();
 
-      // Якщо з бази Supabase випала мікросхема — поповнюємо числовий баланс
       if (foundItem.id === 'microchip') {
         const chipsCount = foundItem.count || 1;
         nextPlayer.astatCoins += chipsCount;
         notify(`📟 Знайдено кремнієву плату: +${chipsCount} мікросхему!`, 'success');
-      } 
-      // Фізичні предмети додаємо в інвентар
-      else {
+      } else {
         const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
         if (idx >= 0) {
           nextInventory[idx] = { ...nextInventory[idx], count: nextInventory[idx].count + foundItem.count };
@@ -541,7 +559,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0d0b] text-[#c6d1c8] font-mono selection:bg-[#2b5936] selection:text-white relative overflow-hidden flex flex-col justify-between">
+    <div className="min-h-screen bg-[#0a0d0b] text-[#c6d1c8] font-mono selection:bg-[#2b5936] selection:text-white relative overflow-hidden flex flex-col justify-between pb-20 md:pb-0">
       <div className="pointer-events-none fixed inset-0 z-50 bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.02)_0%,transparent_100%)] opacity-80" />
       <div
         className="pointer-events-none fixed inset-0 z-50 opacity-20"
@@ -551,7 +569,7 @@ export default function App() {
         }}
       />
 
-      {/* Каскадний стек тактичних Push-сповіщень */}
+      {/* Push-сповіщення */}
       <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-1.5 pointer-events-none max-w-[92vw] w-auto">
         {notifications.map((n) => (
           <div
@@ -574,7 +592,7 @@ export default function App() {
 
       <HeaderHUD player={player} />
 
-      {/* Верхній банер ходу */}
+      {/* Банер маршу в дорозі */}
       {expedition && activeTab !== 'map' && (
         <div className="bg-[#142318] border-b border-[#2b5936] px-3 py-2 text-xs z-30">
           <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
@@ -603,8 +621,9 @@ export default function App() {
         </div>
       )}
 
-      {/* Головний контейнер термінала верхні вкладки */}
+      {/* Основний робочий простір */}
       <main className="max-w-7xl mx-auto w-full p-3 md:p-5 flex-1 flex flex-col gap-4">
+        {/* Верхні вкладки (лише для ПК/планшетів) */}
         <div className="hidden md:flex items-center gap-1.5 border-b border-[#243328] pb-2 overflow-x-auto no-scrollbar text-xs">
           <button
             onClick={() => setActiveTab('map')}
@@ -653,6 +672,7 @@ export default function App() {
             onRest={handleRest}
             onRelocateCamp={handleRelocateCamp}
             sectorSearches={sectorSearches}
+            exploredSectors={exploredSectors}
             onOpenAfkModal={() => setShowAfkModal(true)}
           />
         )}
@@ -670,6 +690,49 @@ export default function App() {
         )}
         {activeTab === 'profile' && <ProfileView player={player} campCoords={campCoords} />}
       </main>
+
+      {/* Мобільна фіксована док-панель знизу (завжди під пальцем) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070e0a]/95 backdrop-blur-lg border-t border-[#1e3825] px-2 py-1.5 flex items-center justify-around shadow-[0_-8px_20px_rgba(0,0,0,0.8)]">
+        <button
+          onClick={() => setActiveTab('map')}
+          className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg transition ${
+            activeTab === 'map' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Compass className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Карта</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('inventory')}
+          className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg transition ${
+            activeTab === 'inventory' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Backpack className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Рюкзак</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('radio')}
+          className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg transition ${
+            activeTab === 'radio' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Radio className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Радіо</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg transition ${
+            activeTab === 'profile' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
+          }`}
+        >
+          <Crosshair className="w-5 h-5 mb-0.5" />
+          <span className="text-[9px] font-bold tracking-tight">Профіль</span>
+        </button>
+      </nav>
 
       {showAfkModal && expedition && <AfkModal expedition={expedition} onClose={() => setShowAfkModal(false)} />}
 
@@ -695,16 +758,17 @@ export default function App() {
             };
 
             const initialInv = [...INITIAL_AWAKENING_INVENTORY];
+            const initialExplored = getSurroundingSectorKeys(data.startCoords.lat, data.startCoords.lng);
 
             setPlayer(updatedPlayer);
             setCoords(data.startCoords);
             setCampCoords(data.startCoords);
             setInventory(initialInv);
+            setExploredSectors(initialExplored);
 
             setHasCompletedOnboarding(true);
             setIsBooting(true);
 
-            // Первинне збереження профілю та предметів у Supabase
             try {
               let localPlayerId = localStorage.getItem('astat_player_id');
               if (!localPlayerId) {
@@ -726,6 +790,7 @@ export default function App() {
                 camp_lng: data.startCoords.lng,
                 conditions: updatedPlayer.conditions,
                 inventory: initialInv,
+                explored_sectors: initialExplored,
                 updated_at: new Date().toISOString()
               });
             } catch (err) {
@@ -742,7 +807,6 @@ export default function App() {
         />
       )}
 
-      {/* Екран тактичної ініціалізації та запуску терміналу */}
       {isBooting && (
         <TerminalBootScreen
           callsign={player.callsign}
@@ -755,55 +819,13 @@ export default function App() {
         />
       )}
 
-      <footer className="border-t border-[#1d2720] bg-[#0c120e] px-4 py-2 text-[10px] text-[#556b5b] flex flex-wrap items-center justify-between gap-2">
+      <footer className="border-t border-[#1d2720] bg-[#0c120e] px-4 py-2 text-[10px] text-[#556b5b] hidden md:flex flex-wrap items-center justify-between gap-2">
         <div>ASTAT HYBRID RPG ENGINE • ПОЛІССЯ-АНТИМАТЕРІЯ • УКРАЇНСЬКА ЛОКАЛІЗАЦІЯ</div>
         <div className="flex items-center gap-3">
           <span>GPS: {coords.lat.toFixed(5)}° N, {coords.lng.toFixed(5)}° E</span>
           <span>Статус зв'язку: АКТИВНИЙ</span>
         </div>
       </footer>
-      {/* Мобільна фіксована док-панель навігації (завжди під пальцем) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070e0a]/95 backdrop-blur-lg border-t border-[#1e3825] px-2 py-1.5 flex items-center justify-around shadow-[0_-8px_20px_rgba(0,0,0,0.8)]">
-        <button
-          onClick={() => setActiveTab('map')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
-            activeTab === 'map' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
-          }`}
-        >
-          <Compass className="w-5 h-5 mb-0.5" />
-          <span className="text-[9px] font-bold tracking-tight">Карта</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('inventory')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
-            activeTab === 'inventory' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
-          }`}
-        >
-          <Backpack className="w-5 h-5 mb-0.5" />
-          <span className="text-[9px] font-bold tracking-tight">Рюкзак</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('radio')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
-            activeTab === 'radio' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
-          }`}
-        >
-          <Radio className="w-5 h-5 mb-0.5" />
-          <span className="text-[9px] font-bold tracking-tight">Радіо</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('profile')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-lg transition ${
-            activeTab === 'profile' ? 'text-emerald-300 bg-[#14261a]' : 'text-[#6b8572] hover:text-[#a1bda7]'
-          }`}
-        >
-          <Crosshair className="w-5 h-5 mb-0.5" />
-          <span className="text-[9px] font-bold tracking-tight">Профіль</span>
-        </button>
-      </nav>
     </div>
   );
 }

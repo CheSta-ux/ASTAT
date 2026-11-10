@@ -3,7 +3,8 @@ import {
   MapPin, Eye, Bed, Tent, Footprints, AlertCircle, Waves, 
   Building2, Factory, Route, Anchor, 
   Compass, Ship, Zap, Mountain, Crosshair, Wheat, TreePine, 
-  Clock, Lock, CheckCircle2, Radio
+  Clock, Lock, CheckCircle2, Radio, HelpCircle,
+  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, LocateFixed
 } from 'lucide-react';
 import type { Coordinates, ExpeditionState, PlayerStats, SectorDefinition } from '../types/game';
 import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisticTravelTime } from '../utils/coordinates';
@@ -17,6 +18,7 @@ interface TargetSelection {
   lng: number;
   data: SectorDefinition;
   dist: number;
+  isFog?: boolean;
 }
 
 interface MapViewProps {
@@ -31,6 +33,7 @@ interface MapViewProps {
   onRest: () => void;
   onRelocateCamp: () => void;
   sectorSearches: Record<string, SectorSearchRecord>;
+  exploredSectors: string[];
   onOpenAfkModal?: () => void;
 }
 
@@ -84,11 +87,15 @@ export const MapView: React.FC<MapViewProps> = ({
   onRest,
   onRelocateCamp,
   sectorSearches,
+  exploredSectors = [],
   onOpenAfkModal
 }) => {
   const gridRadius = 2;
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
+
+  // Зміщення фокусу огляду карти (вільний панінг у будь-який бік)
+  const [viewOffset, setViewOffset] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 
   const [currentTime, setCurrentTime] = useState(Date.now());
   useEffect(() => {
@@ -96,12 +103,17 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const centerTileX = lon2tile(coords.lng, zoom);
-  const centerTileY = lat2tile(coords.lat, zoom);
+  // Географічний центр поточної камери
+  const cameraCenter = useMemo(() => {
+    return offsetGeoBySectors(coords.lat, coords.lng, viewOffset.dx, viewOffset.dy);
+  }, [coords.lat, coords.lng, viewOffset]);
+
+  const centerTileX = lon2tile(cameraCenter.lng, zoom);
+  const centerTileY = lat2tile(cameraCenter.lat, zoom);
 
   const n = Math.pow(2, zoom);
-  const exactTileX = ((coords.lng + 180) / 360) * n;
-  const latRad = (coords.lat * Math.PI) / 180;
+  const exactTileX = ((cameraCenter.lng + 180) / 360) * n;
+  const latRad = (cameraCenter.lat * Math.PI) / 180;
   const exactTileY = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
 
   const shiftPercentX = (centerTileX + 0.5 - exactTileX) * 100;
@@ -121,11 +133,12 @@ export const MapView: React.FC<MapViewProps> = ({
     return list;
   }, [centerTileX, centerTileY]);
 
+  // Список 25 секторів навколо камери огляду
   const sectorList = useMemo(() => {
     const list = [];
     for (let dy = gridRadius; dy >= -gridRadius; dy--) {
       for (let dx = -gridRadius; dx <= gridRadius; dx++) {
-        const geo = offsetGeoBySectors(coords.lat, coords.lng, dx, dy);
+        const geo = offsetGeoBySectors(cameraCenter.lat, cameraCenter.lng, dx, dy);
         list.push({
           dx,
           dy,
@@ -136,7 +149,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
     return list;
-  }, [coords.lat, coords.lng]);
+  }, [cameraCenter.lat, cameraCenter.lng]);
 
   useEffect(() => {
     let isMounted = true;
@@ -148,7 +161,7 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [coords.lat, coords.lng, sectorList]);
+  }, [cameraCenter.lat, cameraCenter.lng, sectorList]);
 
   // Координати цілі активного маршу
   const expeditionTargetCoords = useMemo(() => {
@@ -159,11 +172,20 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition]);
 
+  // Сет розвіданих секторів
+  const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
+
   const visibleSectors = useMemo(() => {
     return sectorList.map((sec) => {
-      const distMeters = calculateHaversineDistanceMeters(coords.lat, coords.lng, sec.lat, sec.lng);
+      const distFromPlayer = calculateHaversineDistanceMeters(coords.lat, coords.lng, sec.lat, sec.lng);
       const distFromCamp = calculateHaversineDistanceMeters(sec.lat, sec.lng, campCoords.lat, campCoords.lng);
       const isCampSector = distFromCamp < 50;
+      const isCurrentPlayerPos = distFromPlayer < 50;
+
+      // Пряма видимість тактичного радара: сектор гравця та прилеглі (до 150м)
+      const isLiveRadar = distFromPlayer <= 160;
+      const isEverExplored = exploredSet.has(sec.key) || isCurrentPlayerPos || isCampSector;
+      const isFog = !isLiveRadar && !isEverExplored;
 
       const classification = radarMap[sec.key] || {
         isWater: false,
@@ -174,7 +196,6 @@ export const MapView: React.FC<MapViewProps> = ({
 
       const searchState = getSectorSearchStatus(sec.lat, sec.lng, sectorSearches, currentTime);
 
-      // Чи є сектор ціллю активного маршу
       const isExpeditionDestination = Boolean(
         expeditionTargetCoords &&
         calculateHaversineDistanceMeters(sec.lat, sec.lng, expeditionTargetCoords.lat, expeditionTargetCoords.lng) < 50
@@ -192,12 +213,15 @@ export const MapView: React.FC<MapViewProps> = ({
         ),
         classification,
         searchState,
+        isLiveRadar,
+        isEverExplored,
+        isFog,
         isExpeditionDestination,
-        isCurrent: sec.dx === 0 && sec.dy === 0,
-        distanceMeters: distMeters
+        isCurrent: isCurrentPlayerPos,
+        distanceMeters: distFromPlayer
       };
     });
-  }, [sectorList, coords, campCoords, radarMap, sectorSearches, currentTime, expeditionTargetCoords]);
+  }, [sectorList, coords, campCoords, exploredSet, radarMap, sectorSearches, currentTime, expeditionTargetCoords]);
 
   const currentSectorKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
   const currentClassification = radarMap[currentSectorKey] || {
@@ -244,7 +268,6 @@ export const MapView: React.FC<MapViewProps> = ({
     );
   }, [selectedTarget, isSelectedCurrent, coords, player]);
 
-  // Розрахунки для активного маршу
   const transitProgress = useMemo(() => {
     if (!expedition || !expeditionTargetCoords) return null;
 
@@ -279,19 +302,37 @@ export const MapView: React.FC<MapViewProps> = ({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
       <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative">
-        {/* Адаптивна панель GPS: у 2 рядки на вузьких екранах, в 1 рядок на ширших */}
+        
+        {/* Верхня панель: GPS та База */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-2 text-xs z-10">
           <div className="flex items-center gap-1.5 text-emerald-300 font-bold bg-[#08100b]/90 px-2 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs">
             <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
             <span>GPS: {coords.lat.toFixed(4)}°, {coords.lng.toFixed(4)}°</span>
+            {viewOffset.dx !== 0 || viewOffset.dy !== 0 ? (
+              <span className="text-amber-400 ml-1 text-[9px] font-mono">(Огляд зміщено)</span>
+            ) : null}
           </div>
-          <div className="flex items-center gap-1.5 text-[#8ba793] bg-[#08100b]/90 px-2 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs">
-            <Tent className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
-            <span>База: {campCoords.lat.toFixed(4)}° ({distanceToCampMeters}м)</span>
+
+          <div className="flex items-center gap-2">
+            {(viewOffset.dx !== 0 || viewOffset.dy !== 0) && (
+              <button
+                type="button"
+                onClick={() => setViewOffset({ dx: 0, dy: 0 })}
+                className="flex items-center gap-1 bg-[#1a2e20] hover:bg-[#25462f] border border-[#376943] text-emerald-300 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 shadow-md"
+              >
+                <LocateFixed className="w-3 h-3 text-emerald-400" />
+                <span>Центрувати</span>
+              </button>
+            )}
+
+            <div className="flex items-center gap-1.5 text-[#8ba793] bg-[#08100b]/90 px-2 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs">
+              <Tent className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
+              <span>База: {campCoords.lat.toFixed(4)}° ({distanceToCampMeters}м)</span>
+            </div>
           </div>
         </div>
 
-        {/* СИНХРОНІЗОВАНИЙ В'ЮПОРТ ДЛЯ МАПИ ТА СІТКИ */}
+        {/* СИНХРОНІЗОВАНИЙ В'ЮПОРТ ДЛЯ МАПИ ТА СІТКИ З ПАНІНГОМ */}
         <div className="relative w-full max-w-[620px] aspect-square mx-auto my-auto rounded-lg overflow-hidden border border-[#233327] bg-[#070d09] shadow-inner">
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden opacity-80">
             <div
@@ -316,7 +357,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
           <div className="absolute inset-0 bg-radial from-transparent via-[#060a07]/20 to-[#040605]/80 pointer-events-none z-0" />
 
-          {/* ТАКТИЧНА СІТКА 5x5 */}
+          {/* ТАКТИЧНА СІТКА 5x5 З ТУМАНОМ ВІЙНИ */}
           <div className="absolute inset-0 grid grid-cols-5 p-1.5 gap-1.5 select-none z-10">
             {visibleSectors.map((sector, idx) => {
               const isCampSector = calculateHaversineDistanceMeters(sector.lat, sector.lng, campCoords.lat, campCoords.lng) < 50;
@@ -330,6 +371,57 @@ export const MapView: React.FC<MapViewProps> = ({
               const isPartiallySearched = searchesLeft < 4 && !isDepleted;
               const isTargetOfMarch = sector.isExpeditionDestination;
 
+              // --- СТАН 1: ТУМАН ВІЙНИ (Terra Incognita) ---
+              if (sector.isFog) {
+                return (
+                  <div
+                    key={idx}
+                    onClick={() =>
+                      !expedition &&
+                      setSelectedTarget({
+                        lat: sector.lat,
+                        lng: sector.lng,
+                        data: sector.data,
+                        dist: sector.distanceMeters,
+                        isFog: true
+                      })
+                    }
+                    className={`rounded border transition-all flex flex-col items-center justify-between p-1 relative cursor-pointer overflow-hidden group ${
+                      isTargetOfMarch
+                        ? 'bg-amber-950/70 border-amber-400 ring-2 ring-amber-400 animate-pulse'
+                        : isSelected
+                        ? 'bg-[#0f1410] border-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)] ring-1 ring-amber-400'
+                        : 'bg-[#040705]/95 border-[#152218]/90 hover:border-[#2f5436]'
+                    }`}
+                  >
+                    <div className="w-full flex items-center justify-between">
+                      <span className="text-[6px] text-[#4d6652] font-mono font-bold tracking-wider">???</span>
+                      <span className="text-[6px] text-[#334737] font-mono">FOW</span>
+                    </div>
+
+                    <div className="my-auto flex items-center justify-center opacity-40 group-hover:opacity-70 transition">
+                      {isTargetOfMarch ? (
+                        <Footprints className="w-4 h-4 text-amber-400 animate-bounce" />
+                      ) : (
+                        <HelpCircle className="w-4 h-4 text-[#4f6e56]" />
+                      )}
+                    </div>
+
+                    <div className="w-full text-center mt-auto">
+                      <div className="text-[7.5px] font-mono font-bold text-[#4e6b54] uppercase tracking-tight truncate">
+                        НЕРОЗВІДАНО
+                      </div>
+                      <div className="text-[7px] font-mono text-[#3d5742] leading-none">
+                        {sector.distanceMeters}м
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // --- СТАН 2: РОЗВІДАНИЙ / ЖИВИЙ СЕКТОР ---
+              const isDimmedMemory = !sector.isLiveRadar && sector.isEverExplored;
+
               return (
                 <div
                   key={idx}
@@ -339,7 +431,8 @@ export const MapView: React.FC<MapViewProps> = ({
                       lat: sector.lat,
                       lng: sector.lng,
                       data: sector.data,
-                      dist: sector.distanceMeters
+                      dist: sector.distanceMeters,
+                      isFog: false
                     })
                   }
                   className={`rounded border transition-all flex flex-col items-center justify-between p-1 relative cursor-pointer overflow-hidden group ${
@@ -364,7 +457,7 @@ export const MapView: React.FC<MapViewProps> = ({
                       : biome === 'mountain'
                       ? 'bg-[#141212]/70 border-[#4a423f]/70 hover:border-stone-300'
                       : 'bg-black/45 border-[#2f4935]/70 hover:bg-black/65 hover:border-emerald-400/90'
-                  }`}
+                  } ${isDimmedMemory ? 'opacity-65 filter saturate-50' : ''}`}
                 >
                   <div className="w-full flex items-center justify-between leading-none">
                     <div>
@@ -425,20 +518,63 @@ export const MapView: React.FC<MapViewProps> = ({
               );
             })}
           </div>
+
+          {/* НАВІГАЦІЙНІ СТРІЛКИ ПЕРЕМІЩЕННЯ ОГЛЯДУ (PAN CONTROLS) */}
+          <div className="absolute bottom-2 right-2 z-20 flex flex-col items-center bg-[#060c08]/90 p-1 rounded-lg border border-[#1e3825] backdrop-blur-md shadow-xl">
+            <button
+              type="button"
+              onClick={() => setViewOffset((prev) => ({ ...prev, dy: prev.dy + 1 }))}
+              className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
+              title="Огляд на північ"
+            >
+              <ArrowUp className="w-3.5 h-3.5" />
+            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setViewOffset((prev) => ({ ...prev, dx: prev.dx - 1 }))}
+                className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
+                title="Огляд на захід"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewOffset({ dx: 0, dy: 0 })}
+                className="p-1 hover:bg-[#1a3321] text-amber-300 rounded active:scale-90"
+                title="Центрувати на виживанці"
+              >
+                <LocateFixed className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewOffset((prev) => ({ ...prev, dx: prev.dx + 1 }))}
+                className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
+                title="Огляд на схід"
+              >
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setViewOffset((prev) => ({ ...prev, dy: prev.dy - 1 }))}
+              className="p-1 hover:bg-[#1a3321] text-emerald-300 rounded active:scale-90"
+              title="Огляд на південь"
+            >
+              <ArrowDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
-        <div className="mt-2 pt-2 border-t border-[#1a291f] flex items-center justify-between text-[11px] text-[#718a78] z-10 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
-          <span>* Тактичний георадар</span>
-          <span>Огляд: 500×500 м</span>
-        </div>
-
-        {/* ================= МОБІЛЬНА ПЛАШКА ШВИДКОЇ ДІЇ (БЕЗ СКРОЛІНГУ) ================= */}
+        {/* ================= МОБІЛЬНИЙ ВІДЖЕТ ШВИДКОЇ ДІЇ (ОДРАЗУ ПІД КАРТОЮ) ================= */}
         <div className="lg:hidden mt-2 z-20">
           {!expedition && selectedTarget && !isSelectedCurrent && routeEstimates && (
             <div className="p-2.5 bg-[#121c15] border border-amber-500/80 rounded-lg shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-bottom-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 truncate">
-                  <span className="text-amber-400 font-bold text-xs truncate">{selectedTarget.data.name}</span>
+                  <span className="text-amber-400 font-bold text-xs truncate">
+                    {selectedTarget.isFog ? 'Нерозвіданий сектор (Туман)' : selectedTarget.data.name}
+                  </span>
                   <span className="text-[10px] text-[#8ea894] font-mono shrink-0">({routeEstimates.meters}м)</span>
                 </div>
                 <div className="text-[10px] text-[#718d78] font-mono mt-0.5">
@@ -456,6 +592,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 </span>
               ) : (
                 <button
+                  type="button"
                   onClick={() =>
                     onStartExpedition({
                       x: selectedTarget.lat,
@@ -467,7 +604,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-md shadow-lg flex items-center gap-1.5 shrink-0 active:scale-95 transition"
                 >
                   <Footprints className="w-3.5 h-3.5 shrink-0" />
-                  <span>Марш</span>
+                  <span>{selectedTarget.isFog ? 'Розвідка' : 'Марш'}</span>
                 </button>
               )}
             </div>
@@ -477,24 +614,31 @@ export const MapView: React.FC<MapViewProps> = ({
           {!expedition && (!selectedTarget || isSelectedCurrent) && (
             <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
                 onClick={onSearch}
                 disabled={isAtCamp || currentSearchStatus.isDepleted}
-                className="py-2 px-2 bg-[#1b3321] hover:bg-[#25462e] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#376342] disabled:border-[#1d2a1f] text-emerald-100 font-bold text-xs rounded flex items-center justify-center gap-1.5 shadow"
+                className="py-2 px-2 bg-[#1b3321] hover:bg-[#25462e] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#376342] disabled:border-[#1d2a1f] text-emerald-100 font-bold text-xs rounded flex items-center justify-center gap-1.5 shadow active:scale-95 transition"
               >
                 <Eye className="w-3.5 h-3.5 shrink-0" />
                 <span>{isAtCamp ? 'У таборі' : currentSearchStatus.isDepleted ? 'Виснажено' : 'Огляд (-4%)'}</span>
               </button>
 
               <button
+                type="button"
                 onClick={onRest}
                 disabled={!isAtCamp}
-                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2a1f] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5"
+                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2a1f] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5 active:scale-95 transition"
               >
                 <Bed className="w-3.5 h-3.5 shrink-0" />
                 <span>Відпочити</span>
               </button>
             </div>
           )}
+        </div>
+
+        <div className="mt-2 pt-2 border-t border-[#1a291f] flex items-center justify-between text-[11px] text-[#718a78] z-10 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
+          <span>* Тактичний радар: радіус огляду та туман війни</span>
+          <span>Огляд: 500×500 м</span>
         </div>
       </div>
 
@@ -570,21 +714,6 @@ export const MapView: React.FC<MapViewProps> = ({
                   </b>
                 </div>
               </div>
-
-              {/* Статус-лог маршу */}
-              <div className="mt-3 p-2.5 rounded bg-[#0b140e] border border-[#1b2f21] text-[10px] font-mono text-[#789680] space-y-1">
-                <div className="text-[9px] text-[#4d6b54] font-bold uppercase tracking-wider">СТАТУС МАРШРУТУ:</div>
-                <div className="flex items-center gap-1.5 text-slate-300">
-                  <Footprints className="w-3 h-3 text-amber-400 animate-bounce" />
-                  <span>Виживанець здійснює марш-кидок через сектори.</span>
-                </div>
-                <div className="text-[#62806a]">
-                  • Точка виходу: <span className="text-slate-300">{currentSectorInfo.name}</span>
-                </div>
-                <div className="text-[#62806a]">
-                  • Фоновий стан спорядження: стабільний.
-                </div>
-              </div>
             </div>
 
             {onOpenAfkModal && (
@@ -637,8 +766,8 @@ export const MapView: React.FC<MapViewProps> = ({
             </div>
 
             <div className="mt-4 space-y-2">
-              {/* Кнопка 1: Огляд місцевості */}
               <button
+                type="button"
                 onClick={onSearch}
                 disabled={Boolean(expedition) || isAtCamp || currentSearchStatus.isDepleted}
                 className="w-full py-2.5 px-3 bg-[#1e3825] hover:bg-[#2b5135] disabled:bg-[#17221a] disabled:text-[#55695a] border border-[#3b6e47] disabled:border-[#223126] text-emerald-100 font-bold text-xs rounded transition flex items-center justify-center gap-2 shadow"
@@ -654,8 +783,8 @@ export const MapView: React.FC<MapViewProps> = ({
               </button>
 
               <div className="grid grid-cols-2 gap-2">
-                {/* Кнопка 2: Відпочинок */}
                 <button
+                  type="button"
                   onClick={onRest}
                   disabled={Boolean(expedition) || !isAtCamp}
                   className="py-2 px-2 bg-[#17261d] hover:bg-[#22382b] disabled:bg-[#131c15] disabled:text-[#425246] border border-[#284732] disabled:border-[#1d2920] text-xs font-semibold rounded text-slate-200 transition flex items-center justify-center gap-1.5"
@@ -664,8 +793,8 @@ export const MapView: React.FC<MapViewProps> = ({
                   <span>Відпочити</span>
                 </button>
 
-                {/* Кнопка 3: Перенесення табору */}
                 <button
+                  type="button"
                   onClick={onRelocateCamp}
                   disabled={Boolean(expedition) || isAtCamp}
                   className="py-2 px-2 bg-[#17261d] hover:bg-[#22382b] disabled:bg-[#131c15] disabled:text-[#425246] border border-[#284732] disabled:border-[#1d2920] text-xs font-semibold rounded text-emerald-300 transition flex items-center justify-center gap-1.5"
@@ -678,7 +807,7 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         )}
 
-        {/* ================= НИЖНЯ КАРТКА ПРОРАХУНКУ (Тільки коли марш не йде) ================= */}
+        {/* ================= НИЖНЯ ДЕТАЛЬНА КАРТКА ДЛЯ ДЕСКТОПУ ================= */}
         {!expedition && selectedTarget ? (
           isSelectedCurrent ? (
             <div className="mt-4 pt-3 border-t border-[#233327] bg-[#141d16] p-3 rounded border border-[#2c4232]">
@@ -694,9 +823,11 @@ export const MapView: React.FC<MapViewProps> = ({
             </div>
           ) : routeEstimates ? (
             <div className="mt-4 pt-3 border-t border-[#233327] bg-[#141d16] p-3 rounded border border-[#2c4232]">
-              <div className="text-[10px] text-yellow-400 font-bold uppercase tracking-wider">ПРОРАХУНОК МАРШУ (4.5 КМ/ГОД)</div>
+              <div className="text-[10px] text-yellow-400 font-bold uppercase tracking-wider">
+                {selectedTarget.isFog ? 'РОЗВІДКА НЕВІДОМОЇ ЗОНИ' : 'ПРОРАХУНОК МАРШУ (4.5 КМ/ГОД)'}
+              </div>
               <div className="text-xs font-bold text-slate-100 mt-0.5 flex items-center justify-between">
-                <span>{selectedTarget.data.name}</span>
+                <span>{selectedTarget.isFog ? 'Нерозвідана територія' : selectedTarget.data.name}</span>
                 {selectedTarget.data.isWaterBlocked && (
                   <span className="text-[10px] text-cyan-400 flex items-center gap-1">
                     <Waves className="w-3.5 h-3.5" /> Глибока вода
@@ -740,6 +871,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 </div>
               ) : (
                 <button
+                  type="button"
                   onClick={() =>
                     onStartExpedition({
                       x: selectedTarget.lat,
@@ -750,7 +882,8 @@ export const MapView: React.FC<MapViewProps> = ({
                   }
                   className="w-full mt-2.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs rounded transition flex items-center justify-center gap-2"
                 >
-                  <Footprints className="w-4 h-4" /> Почати марш
+                  <Footprints className="w-4 h-4" /> 
+                  <span>{selectedTarget.isFog ? 'Розпочати розвідку' : 'Почати марш'}</span>
                 </button>
               )}
             </div>
