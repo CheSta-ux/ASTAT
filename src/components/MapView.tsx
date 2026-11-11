@@ -89,6 +89,7 @@ export const MapView: React.FC<MapViewProps> = ({
 }) => {
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
+  const terrainCacheRef = useRef<Record<string, SectorTerrainData>>({});
   const [panPx, setPanPx] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -205,13 +206,13 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition]);
 
-  // ГЛОБАЛЬНА СІТКА СЕКТОРІВ: ОБРАНИЙ СЕКТОР (НАВІТЬ У ТУМАНІ) ТЕПЕР ЗАВЖДИ ЗАКРІПЛЕНИЙ ТУТ
+  // ГЛОБАЛЬНА СІТКА СЕКТОРІВ: ОБРАНИЙ СЕКТОР (НАВІТЬ У ТУМАНІ) ТЕПЕР ЗАКРІПЛЕНИЙ ТУТ
   const sectorList = useMemo(() => {
     const map = new Map<string, { lat: number; lng: number; key: string }>();
 
-    // А) Сектори навколо центру камери
-    const radX = 6;
-    const radY = 5;
+    // 1. Поточний в'юпорт камери
+    const radX = 7;
+    const radY = 6;
     for (let dy = cameraGridCenter.gy + radY; dy >= cameraGridCenter.gy - radY; dy--) {
       for (let dx = cameraGridCenter.gx - radX; dx <= cameraGridCenter.gx + radX; dx++) {
         const geo = offsetGeoBySectors(campCoords.lat, campCoords.lng, dx, dy);
@@ -222,7 +223,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
 
-    // Б) Усі відкриті/розвідані сектори гравця
+    // 2. Усі збережені відвідані сектори
     exploredSectors.forEach((key) => {
       if (map.has(key)) return;
       const parts = key.split('-');
@@ -235,7 +236,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
-    // В) Обраний невідкритий сектор (намертво прив'язується до світових координат, усуваючи ковзання!)
+    // 3. Обраний сектор (якщо в тумані за межами екрана — намертво прив'язується до сітки)
     if (selectedTarget) {
       const stKey = `${selectedTarget.lat.toFixed(5)}-${selectedTarget.lng.toFixed(5)}`;
       if (!map.has(stKey)) {
@@ -243,7 +244,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
 
-    // Г) Сектор призначення під час маршу
+    // 4. Ціль маршу
     if (expeditionTargetCoords) {
       const expKey = `${expeditionTargetCoords.lat.toFixed(5)}-${expeditionTargetCoords.lng.toFixed(5)}`;
       if (!map.has(expKey)) {
@@ -251,7 +252,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
 
-    // Д) Табір та гравець
+    // 5. Гравець і База
     const pKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
     if (!map.has(pKey)) map.set(pKey, { lat: Number(coords.lat.toFixed(5)), lng: Number(coords.lng.toFixed(5)), key: pKey });
     const cKey = `${campCoords.lat.toFixed(5)}-${campCoords.lng.toFixed(5)}`;
@@ -272,18 +273,21 @@ export const MapView: React.FC<MapViewProps> = ({
     expeditionTargetCoords?.lng
   ]);
 
-  // Запит аналізу рельєфу тільки для безпосередніх околиць гравця
+  // Фонова класифікація рельєфу з постійним кешуванням
   useEffect(() => {
     let isMounted = true;
-    const localSurroundings = sectorList.filter(
-      (s) => calculateHaversineDistanceMeters(coords.lat, coords.lng, s.lat, s.lng) <= 300 && !radarMap[s.key]
+    const missing = sectorList.filter(
+      (s) => calculateHaversineDistanceMeters(coords.lat, coords.lng, s.lat, s.lng) <= 300 && 
+             !terrainCacheRef.current[s.key] && 
+             !radarMap[s.key]
     );
 
-    if (localSurroundings.length === 0) return;
+    if (missing.length === 0) return;
 
     const timer = setTimeout(() => {
-      detectGridWater(localSurroundings).then((results: Record<string, SectorTerrainData>) => {
+      detectGridWater(missing).then((results: Record<string, SectorTerrainData>) => {
         if (isMounted && results) {
+          terrainCacheRef.current = { ...terrainCacheRef.current, ...results };
           setRadarMap((prev) => ({ ...prev, ...results }));
         }
       }).catch(() => {});
@@ -297,7 +301,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
 
-  // Формування видимих секторів
+  // Формування секторів: без підміни на ліс і з повною стабільністю біомів
   const visibleSectors = useMemo(() => {
     return sectorList.map((sec) => {
       const distFromPlayer = calculateHaversineDistanceMeters(coords.lat, coords.lng, sec.lat, sec.lng);
@@ -309,11 +313,10 @@ export const MapView: React.FC<MapViewProps> = ({
       const isEverExplored = exploredSet.has(sec.key) || isCurrentPlayerPos || isCampSector;
       const isFog = !isLiveRadar && !isEverExplored;
 
-      const rawClass = radarMap[sec.key];
+      const rawClass = terrainCacheRef.current[sec.key] || radarMap[sec.key];
       const isActuallyDeepWater = Boolean(rawClass?.isWater && rawClass?.biome === 'water' && !rawClass?.isCoast);
       const isBlockedWater = isActuallyDeepWater && !isCurrentPlayerPos && !isCampSector && distFromPlayer > 200;
       
-      const biome = (isBlockedWater ? 'water' : rawClass?.biome && rawClass.biome !== 'water' ? rawClass.biome : 'forest');
       const searchState = getSectorSearchStatus(sec.lat, sec.lng, sectorSearches, currentTime);
 
       const isExpeditionDestination = Boolean(
@@ -325,9 +328,19 @@ export const MapView: React.FC<MapViewProps> = ({
       const screenX = secWorld.x - cameraWorld.x + containerSize.width / 2;
       const screenY = secWorld.y - cameraWorld.y + containerSize.height / 2;
 
+      // Не передаємо насильний 'forest' — генератор стабільно тримає свій справжній біом
+      const sectorData = createSectorData(
+        sec.lat, 
+        sec.lng, 
+        isBlockedWater, 
+        false, 
+        isCampSector, 
+        isBlockedWater ? 'water' : rawClass?.biome
+      );
+
       return {
         ...sec,
-        data: createSectorData(sec.lat, sec.lng, isBlockedWater, false, isCampSector, biome),
+        data: sectorData,
         isBlockedWater,
         searchState,
         isLiveRadar,
@@ -411,18 +424,19 @@ export const MapView: React.FC<MapViewProps> = ({
     ctx.globalCompositeOperation = 'source-over';
   }, [containerSize.width, containerSize.height, cameraWorld.x, cameraWorld.y, campScreen.x, campScreen.y, playerScreen.x, playerScreen.y, exploredSectors]);
 
+  // Інформація про поточний сектор
   const currentSectorInfo = useMemo(() => {
     const curSec = visibleSectors.find((s) => s.isCurrent);
     if (curSec && !isAtCamp) return curSec.data;
     const currentSectorKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
-    const curClass = radarMap[currentSectorKey];
+    const curClass = terrainCacheRef.current[currentSectorKey] || radarMap[currentSectorKey];
     return createSectorData(
       coords.lat,
       coords.lng,
       false,
       false,
       isAtCamp,
-      curClass?.biome && curClass.biome !== 'water' ? curClass.biome : 'forest'
+      curClass?.biome
     );
   }, [coords, isAtCamp, visibleSectors, radarMap]);
 
@@ -450,6 +464,7 @@ export const MapView: React.FC<MapViewProps> = ({
     );
   }, [selectedTarget, isSelectedCurrent, coords, player]);
 
+  // Інформація про марш
   const transitProgress = useMemo(() => {
     if (!expedition || !expeditionTargetCoords) return null;
 
@@ -472,8 +487,7 @@ export const MapView: React.FC<MapViewProps> = ({
                        expeditionTargetCoords.lng,
                        false,
                        false,
-                       false,
-                       'forest'
+                       false
                      );
 
     return {
@@ -526,7 +540,6 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     } catch (_) {}
 
-    // 150мс блокування, щоб відпускання пальця не спрацьовувало як клік
     if (hasMovedRef.current) {
       setTimeout(() => {
         hasMovedRef.current = false;
@@ -534,7 +547,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   };
 
-  // Клік на мапу
+  // Клік на мапу: пошук сектора на стаціонарній сітці
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (hasMovedRef.current || expedition) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -556,16 +569,16 @@ export const MapView: React.FC<MapViewProps> = ({
       setSelectedTarget({
         lat: campCoords.lat,
         lng: campCoords.lng,
-        data: createSectorData(campCoords.lat, campCoords.lng, false, false, true, 'forest'),
+        data: createSectorData(campCoords.lat, campCoords.lng, false, false, true),
         dist: distanceToCampMeters,
         isFog: false
       });
       return;
     }
 
-    // Пошук серед наявних секторів сітки
+    // Пошук найближчої комірки серед усіх згенерованих секторів на екрані
     const nearest = visibleSectors.find(
-      (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 36
+      (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 48
     );
 
     if (nearest) {
@@ -579,7 +592,7 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    // Клік у глибину туману війни з чітким прив'язуванням до кроку сітки
+    // Якщо клік за межами в'юпорта: точний розрахунок дискретного кроку від бази
     const clickWorldX = cameraWorld.x - containerSize.width / 2 + clickScreenX;
     const clickWorldY = cameraWorld.y - containerSize.height / 2 + clickScreenY;
     const clickGeo = worldPixelToLatLng(clickWorldX, clickWorldY, zoom);
@@ -596,12 +609,12 @@ export const MapView: React.FC<MapViewProps> = ({
     const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, sLat, sLng));
     const isCamp = calculateHaversineDistanceMeters(sLat, sLng, campCoords.lat, campCoords.lng) < 45;
     const isFog = !exploredSet.has(sKey) && dist > 165 && !isCamp;
-    const rawClass = radarMap[sKey];
+    const rawClass = terrainCacheRef.current[sKey] || radarMap[sKey];
 
     setSelectedTarget({
       lat: sLat,
       lng: sLng,
-      data: createSectorData(sLat, sLng, false, false, isCamp, rawClass?.biome && rawClass.biome !== 'water' ? rawClass.biome : 'forest'),
+      data: createSectorData(sLat, sLng, false, false, isCamp, rawClass?.biome),
       dist,
       isFog
     });
@@ -767,7 +780,8 @@ export const MapView: React.FC<MapViewProps> = ({
                 calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 25
               );
 
-              // Якщо сектор у тумані — він малюється лише коли його обрано або сюди йде марш
+              // 1. СЕКТОР У ТУМАНІ ВІЙНИ:
+              // Рендериться ТІЛЬКИ коли його обрано або сюди прямує марш. Інакше повністю прихований (null).
               if (sector.isFog) {
                 if (!isSelected && !sector.isExpeditionDestination) return null;
                 return (
@@ -780,25 +794,31 @@ export const MapView: React.FC<MapViewProps> = ({
                       transform: 'translate(-50%, -50%)',
                       zIndex: 25
                     }}
-                    className="pointer-events-none flex flex-col items-center justify-center animate-in zoom-in-75 duration-150"
+                    className="pointer-events-none flex flex-col items-center justify-center"
                   >
                     <div className="relative flex items-center justify-center">
-                      <div className={`w-10 h-10 rounded-full border-2 ${sector.isExpeditionDestination ? 'border-amber-400 bg-amber-500/20' : 'border-yellow-400 bg-yellow-400/15 shadow-[0_0_15px_rgba(250,204,21,0.7)]'} flex items-center justify-center animate-pulse`}>
+                      <div className={`w-10 h-10 rounded-full border-2 ${
+                        sector.isExpeditionDestination
+                          ? 'border-amber-400 bg-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.6)] animate-ping'
+                          : 'border-yellow-400 bg-yellow-400/15 shadow-[0_0_15px_rgba(250,204,21,0.7)] animate-pulse'
+                      } flex items-center justify-center`}>
                         {sector.isExpeditionDestination ? (
                           <Footprints className="w-5 h-5 text-amber-300 animate-bounce" />
                         ) : (
-                          <HelpCircle className="w-4 h-4 text-amber-300" />
+                          <HelpCircle className="w-5 h-5 text-yellow-300" />
                         )}
                       </div>
                     </div>
-                    <span className={`text-[7.5px] font-mono font-bold mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${sector.isExpeditionDestination ? 'text-amber-300' : 'text-yellow-300'}`}>
+                    <span className={`text-[7.5px] font-mono font-bold mt-0.5 leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${
+                      sector.isExpeditionDestination ? 'text-amber-300' : 'text-yellow-300'
+                    }`}>
                       {sector.distanceMeters}м
                     </span>
                   </div>
                 );
               }
 
-              // Розвідана локація — підсвічується прямо навколо своєї іконки
+              // 2. ВІДОМА / РОЗВІДАНА ЛОКАЦІЯ
               const isDepleted = sector.searchState.isDepleted;
               const searchesLeft = sector.searchState.searchesLeft;
               const isPartiallySearched = searchesLeft < 4 && !isDepleted;
@@ -819,6 +839,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   }`}
                 >
                   <div className="relative flex items-center justify-center">
+                    {/* Підсвічування обраної відкритої локації прямо навколо її іконки */}
                     {isSelected && (
                       <div className="absolute w-10 h-10 rounded-full border-2 border-yellow-400 bg-yellow-400/15 shadow-[0_0_15px_rgba(250,204,21,0.7)] animate-pulse" />
                     )}
@@ -926,7 +947,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 type="button"
                 onClick={onRest}
                 disabled={!isAtCamp}
-                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2a1f] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5 active:scale-95 transition"
+                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2920] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5 active:scale-95 transition"
               >
                 <Bed className="w-3.5 h-3.5 shrink-0" />
                 <span>Відпочити</span>
