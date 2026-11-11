@@ -544,8 +544,14 @@ export default function App() {
 
     const roll = Math.random();
 
-    if (roll < 0.60) {
-      const foundItem = getRandomLoot();
+    // 1. УСПІШНИЙ ПОШУК (55% шанс)
+    if (roll < 0.55) {
+      // Визначаємо точний біом та назву сектора під ногами виживанця
+      const currentSector = createSectorData(coords.lat, coords.lng, false, false, false);
+      const sectorBiome = currentSector.icon || currentSector.id || 'forest';
+
+      // Отримуємо лут, логічно прив'язаний до поточної місцевості
+      const foundItem = getRandomLoot(sectorBiome, currentSector.name);
 
       if (foundItem.id === 'microchip') {
         const chipsCount = foundItem.count || 1;
@@ -554,19 +560,21 @@ export default function App() {
       } else {
         const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
         if (idx >= 0) {
-          nextInventory[idx] = { ...nextInventory[idx], count: nextInventory[idx].count + foundItem.count };
+          nextInventory[idx] = { ...nextInventory[idx], count: nextInventory[idx].count + (foundItem.count || 1) };
         } else {
-          nextInventory.push(foundItem);
+          nextInventory.push({ ...foundItem, count: foundItem.count || 1 });
         }
 
+        // Тематична іконка для сповіщення
         const itemIcon =
-          foundItem.type === 'food' ? '📦' : 
+          (foundItem as any).category === 'nature' ? '🌿' :
+          foundItem.type === 'food' ? '🍏' : 
           foundItem.type.startsWith('medical') ? '🩹' : 
           foundItem.type === 'junk' ? '🗑️' : 
           foundItem.type === 'rare' ? '✨' : '⚙️';
 
         const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
-        notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count})`, notifyType);
+        notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count || 1})`, notifyType);
       }
     } else if (roll < 0.80) {
       const nextHp = Math.max(0, player.hp - 18);
