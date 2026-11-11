@@ -404,7 +404,7 @@ export default function App() {
     const distFromCamp = calculateHaversineDistanceMeters(destCoords.lat, destCoords.lng, campCoords.lat, campCoords.lng);
     const isAtCamp = distFromCamp < 50;
 
-    const destSector = createSectorData(destCoords.lat, destCoords.lng, false, false, isAtCamp);
+    const destSector = (expData as any).targetSectorData || createSectorData(destCoords.lat, destCoords.lng, false, false, isAtCamp);
     const searchStatus = getSectorSearchStatus(destCoords.lat, destCoords.lng, sectorSearches);
 
     setCoords(destCoords);
@@ -491,6 +491,7 @@ export default function App() {
       targetX: Math.round(targetCoordObj.lng * 1000),
       targetY: Math.round(targetCoordObj.lat * 1000),
       targetCoords: targetCoordObj,
+      targetSectorData: (targetCoordObj as any).targetSectorData,
       totalDuration: estimates.seconds,
       remaining: estimates.seconds,
       hungerCost: estimates.hungerCost,
