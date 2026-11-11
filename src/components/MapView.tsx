@@ -197,10 +197,19 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [cameraLatLng.lat, cameraLatLng.lng, campCoords.lat, campCoords.lng, gridStep]);
 
-  // Генерація секторів із постійним збереженням усіх розвіданих секторів
+  const expeditionTargetCoords = useMemo(() => {
+    if (!expedition) return null;
+    return (expedition as any).targetCoords || {
+      lat: (expedition as any).targetY / 1000,
+      lng: (expedition as any).targetX / 1000
+    };
+  }, [expedition]);
+
+  // ГЛОБАЛЬНА СІТКА СЕКТОРІВ: ОБРАНИЙ СЕКТОР (НАВІТЬ У ТУМАНІ) ТЕПЕР ЗАВЖДИ ЗАКРІПЛЕНИЙ ТУТ
   const sectorList = useMemo(() => {
     const map = new Map<string, { lat: number; lng: number; key: string }>();
 
+    // А) Сектори навколо центру камери
     const radX = 6;
     const radY = 5;
     for (let dy = cameraGridCenter.gy + radY; dy >= cameraGridCenter.gy - radY; dy--) {
@@ -213,6 +222,7 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
 
+    // Б) Усі відкриті/розвідані сектори гравця
     exploredSectors.forEach((key) => {
       if (map.has(key)) return;
       const parts = key.split('-');
@@ -225,15 +235,44 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
+    // В) Обраний невідкритий сектор (намертво прив'язується до світових координат, усуваючи ковзання!)
+    if (selectedTarget) {
+      const stKey = `${selectedTarget.lat.toFixed(5)}-${selectedTarget.lng.toFixed(5)}`;
+      if (!map.has(stKey)) {
+        map.set(stKey, { lat: selectedTarget.lat, lng: selectedTarget.lng, key: stKey });
+      }
+    }
+
+    // Г) Сектор призначення під час маршу
+    if (expeditionTargetCoords) {
+      const expKey = `${expeditionTargetCoords.lat.toFixed(5)}-${expeditionTargetCoords.lng.toFixed(5)}`;
+      if (!map.has(expKey)) {
+        map.set(expKey, { lat: expeditionTargetCoords.lat, lng: expeditionTargetCoords.lng, key: expKey });
+      }
+    }
+
+    // Д) Табір та гравець
     const pKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
     if (!map.has(pKey)) map.set(pKey, { lat: Number(coords.lat.toFixed(5)), lng: Number(coords.lng.toFixed(5)), key: pKey });
     const cKey = `${campCoords.lat.toFixed(5)}-${campCoords.lng.toFixed(5)}`;
     if (!map.has(cKey)) map.set(cKey, { lat: Number(campCoords.lat.toFixed(5)), lng: Number(campCoords.lng.toFixed(5)), key: cKey });
 
     return Array.from(map.values());
-  }, [cameraGridCenter.gx, cameraGridCenter.gy, campCoords.lat, campCoords.lng, exploredSectors, coords.lat, coords.lng]);
+  }, [
+    cameraGridCenter.gx, 
+    cameraGridCenter.gy, 
+    campCoords.lat, 
+    campCoords.lng, 
+    exploredSectors, 
+    coords.lat, 
+    coords.lng, 
+    selectedTarget?.lat, 
+    selectedTarget?.lng, 
+    expeditionTargetCoords?.lat, 
+    expeditionTargetCoords?.lng
+  ]);
 
-  // Запит аналізу рельєфу (обмежуємо запит тільки безпосередніми околицями гравця, уникаючи спаму)
+  // Запит аналізу рельєфу тільки для безпосередніх околиць гравця
   useEffect(() => {
     let isMounted = true;
     const localSurroundings = sectorList.filter(
@@ -256,17 +295,9 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [sectorList, radarMap, coords.lat, coords.lng]);
 
-  const expeditionTargetCoords = useMemo(() => {
-    if (!expedition) return null;
-    return (expedition as any).targetCoords || {
-      lat: (expedition as any).targetY / 1000,
-      lng: (expedition as any).targetX / 1000
-    };
-  }, [expedition]);
-
   const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
 
-  // Формування видимих секторів: ПРІОРИТЕТ СУХОДОЛУ (жодної помилкової води)
+  // Формування видимих секторів
   const visibleSectors = useMemo(() => {
     return sectorList.map((sec) => {
       const distFromPlayer = calculateHaversineDistanceMeters(coords.lat, coords.lng, sec.lat, sec.lng);
@@ -279,12 +310,10 @@ export const MapView: React.FC<MapViewProps> = ({
       const isFog = !isLiveRadar && !isEverExplored;
 
       const rawClass = radarMap[sec.key];
-      // Захист: вода блокується ЛИШЕ якщо це реально відкрита глибока водойма на великій відстані
       const isActuallyDeepWater = Boolean(rawClass?.isWater && rawClass?.biome === 'water' && !rawClass?.isCoast);
       const isBlockedWater = isActuallyDeepWater && !isCurrentPlayerPos && !isCampSector && distFromPlayer > 200;
       
       const biome = (isBlockedWater ? 'water' : rawClass?.biome && rawClass.biome !== 'water' ? rawClass.biome : 'forest');
-
       const searchState = getSectorSearchStatus(sec.lat, sec.lng, sectorSearches, currentTime);
 
       const isExpeditionDestination = Boolean(
@@ -382,7 +411,6 @@ export const MapView: React.FC<MapViewProps> = ({
     ctx.globalCompositeOperation = 'source-over';
   }, [containerSize.width, containerSize.height, cameraWorld.x, cameraWorld.y, campScreen.x, campScreen.y, playerScreen.x, playerScreen.y, exploredSectors]);
 
-  // Інформація про поточний сектор
   const currentSectorInfo = useMemo(() => {
     const curSec = visibleSectors.find((s) => s.isCurrent);
     if (curSec && !isAtCamp) return curSec.data;
@@ -422,7 +450,6 @@ export const MapView: React.FC<MapViewProps> = ({
     );
   }, [selectedTarget, isSelectedCurrent, coords, player]);
 
-  // Інформація про марш
   const transitProgress = useMemo(() => {
     if (!expedition || !expeditionTargetCoords) return null;
 
@@ -474,7 +501,7 @@ export const MapView: React.FC<MapViewProps> = ({
     const deltaX = e.clientX - startPosRef.current.x;
     const deltaY = e.clientY - startPosRef.current.y;
 
-    if (!hasMovedRef.current && Math.hypot(deltaX, deltaY) > 6) {
+    if (!hasMovedRef.current && Math.hypot(deltaX, deltaY) > 5) {
       hasMovedRef.current = true;
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -499,10 +526,11 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     } catch (_) {}
 
+    // 150мс блокування, щоб відпускання пальця не спрацьовувало як клік
     if (hasMovedRef.current) {
       setTimeout(() => {
         hasMovedRef.current = false;
-      }, 80);
+      }, 150);
     }
   };
 
@@ -535,8 +563,9 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
+    // Пошук серед наявних секторів сітки
     const nearest = visibleSectors.find(
-      (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 32
+      (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 36
     );
 
     if (nearest) {
@@ -550,7 +579,7 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    // Клік у туман: чітка фіксація точки в сітці
+    // Клік у глибину туману війни з чітким прив'язуванням до кроку сітки
     const clickWorldX = cameraWorld.x - containerSize.width / 2 + clickScreenX;
     const clickWorldY = cameraWorld.y - containerSize.height / 2 + clickScreenY;
     const clickGeo = worldPixelToLatLng(clickWorldX, clickWorldY, zoom);
@@ -738,9 +767,9 @@ export const MapView: React.FC<MapViewProps> = ({
                 calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 25
               );
 
-              // Якщо сектор у тумані — він непомітний, доки на нього не клікнуть
+              // Якщо сектор у тумані — він малюється лише коли його обрано або сюди йде марш
               if (sector.isFog) {
-                if (!isSelected) return null;
+                if (!isSelected && !sector.isExpeditionDestination) return null;
                 return (
                   <div
                     key={sector.key}
@@ -754,18 +783,22 @@ export const MapView: React.FC<MapViewProps> = ({
                     className="pointer-events-none flex flex-col items-center justify-center animate-in zoom-in-75 duration-150"
                   >
                     <div className="relative flex items-center justify-center">
-                      <div className="w-10 h-10 rounded-full border border-dashed border-amber-400/90 bg-amber-400/10 shadow-[0_0_14px_rgba(251,191,36,0.45)] flex items-center justify-center animate-pulse">
-                        <HelpCircle className="w-4 h-4 text-amber-300" />
+                      <div className={`w-10 h-10 rounded-full border-2 ${sector.isExpeditionDestination ? 'border-amber-400 bg-amber-500/20' : 'border-yellow-400 bg-yellow-400/15 shadow-[0_0_15px_rgba(250,204,21,0.7)]'} flex items-center justify-center animate-pulse`}>
+                        {sector.isExpeditionDestination ? (
+                          <Footprints className="w-5 h-5 text-amber-300 animate-bounce" />
+                        ) : (
+                          <HelpCircle className="w-4 h-4 text-amber-300" />
+                        )}
                       </div>
                     </div>
-                    <span className="text-[7.5px] font-mono font-bold text-amber-300 mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
+                    <span className={`text-[7.5px] font-mono font-bold mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${sector.isExpeditionDestination ? 'text-amber-300' : 'text-yellow-300'}`}>
                       {sector.distanceMeters}м
                     </span>
                   </div>
                 );
               }
 
-              // Відома локація — підсвічується прямо навколо своєї іконки
+              // Розвідана локація — підсвічується прямо навколо своєї іконки
               const isDepleted = sector.searchState.isDepleted;
               const searchesLeft = sector.searchState.searchesLeft;
               const isPartiallySearched = searchesLeft < 4 && !isDepleted;
@@ -893,7 +926,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 type="button"
                 onClick={onRest}
                 disabled={!isAtCamp}
-                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2920] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5 active:scale-95 transition"
+                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2a1f] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5 active:scale-95 transition"
               >
                 <Bed className="w-3.5 h-3.5 shrink-0" />
                 <span>Відпочити</span>
