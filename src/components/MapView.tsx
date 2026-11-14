@@ -3,7 +3,7 @@ import {
   MapPin, Eye, Bed, Tent, Footprints, AlertCircle, Waves, 
   Building2, Factory, Route, Anchor, 
   Compass, Ship, Zap, Mountain, Crosshair, Wheat, TreePine, 
-  Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed
+  Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed, Maximize2, Minimize2
 } from 'lucide-react';
 import type { Coordinates, ExpeditionState, PlayerStats, SectorDefinition } from '../types/game';
 import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisticTravelTime } from '../utils/coordinates';
@@ -93,6 +93,46 @@ export const MapView: React.FC<MapViewProps> = ({
   const [panPx, setPanPx] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const mapWrapperRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const toggleFullscreen = () => {
+    const nextState = !isFullscreen;
+    setIsFullscreen(nextState);
+
+    try {
+      if (nextState && mapWrapperRef.current && !document.fullscreenElement) {
+        mapWrapperRef.current.requestFullscreen?.().catch(() => {});
+      } else if (!nextState && document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    } catch {
+      // iOS Safari використовує CSS-повноекранний режим fixed inset-0
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      if (!document.fullscreenElement && isFullscreen) {
+        // Синхронізуємо вихід за системною кнопкою «Назад» або Esc
+        setIsFullscreen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFsChange);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [containerSize, setContainerSize] = useState({ width: 700, height: 600 });
@@ -646,24 +686,34 @@ export const MapView: React.FC<MapViewProps> = ({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
-      <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative min-h-[390px] sm:min-h-[480px] lg:min-h-[640px]">
-        
-        {/* Верхня панель */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-2 text-xs z-30">
-          <div className="flex items-center gap-1.5 text-emerald-300 font-bold bg-[#08100b]/90 px-2.5 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs">
+      <div
+        ref={mapWrapperRef}
+        className={
+          isFullscreen
+            ? 'fixed inset-0 z-50 h-[100dvh] w-screen bg-[#030604] p-2.5 sm:p-4 flex flex-col justify-between select-none'
+            : 'lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-2.5 sm:p-4 flex flex-col justify-between shadow-2xl relative h-[76dvh] min-h-[480px] sm:h-[600px] lg:h-auto lg:min-h-[660px]'
+        }
+      >
+        {/* Верхня панель: компактний рядок на мобільних + кнопка повного екрана */}
+        <div className="flex items-center justify-between gap-1.5 mb-2 text-xs z-30">
+          <div className="flex items-center gap-1.5 text-emerald-300 font-bold bg-[#08100b]/90 px-2 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs min-w-0 truncate">
             <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
-            <span>GPS: {coords.lat.toFixed(4)}°, {coords.lng.toFixed(4)}°</span>
+            <span className="truncate">
+              {coords.lat.toFixed(4)}°, {coords.lng.toFixed(4)}°
+            </span>
             {isPanned && (
-              <span className="text-amber-400 ml-1 text-[9px] font-mono">(Огляд: {cameraLatLng.lat.toFixed(4)}°)</span>
+              <span className="hidden sm:inline text-amber-400 ml-1 text-[9px] font-mono">
+                (Огляд: {cameraLatLng.lat.toFixed(4)}°)
+              </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
             {isPanned && (
               <button
                 type="button"
                 onClick={() => setPanPx({ x: 0, y: 0 })}
-                className="flex items-center gap-1 bg-[#1a2e20] hover:bg-[#25462f] border border-[#376943] text-emerald-300 px-2.5 py-1 rounded text-[10px] font-bold transition active:scale-95 shadow-md"
+                className="flex items-center gap-1 bg-[#1a2e20] hover:bg-[#25462f] border border-[#376943] text-emerald-300 px-2 py-1 rounded text-[10px] font-bold transition active:scale-95 shadow-md"
               >
                 <LocateFixed className="w-3 h-3 text-emerald-400" />
                 <span>Мене</span>
@@ -679,10 +729,30 @@ export const MapView: React.FC<MapViewProps> = ({
                 });
               }}
               title="Перейти камерою до Табору"
-              className="flex items-center gap-1.5 text-[#8ba793] hover:text-emerald-300 bg-[#08100b]/90 hover:bg-[#122216] px-2.5 py-1 rounded border border-[#203a27] hover:border-emerald-500/80 backdrop-blur-md shadow-md text-[10px] sm:text-xs transition active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 text-[#9cb8a4] hover:text-emerald-300 bg-[#08100b]/90 hover:bg-[#122216] px-2 py-1 rounded border border-[#203a27] hover:border-emerald-500/80 backdrop-blur-md shadow-md text-[10px] sm:text-xs transition active:scale-95 cursor-pointer"
             >
               <Tent className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
-              <span>База: {campCoords.lat.toFixed(4)}° ({distanceToCampMeters}м)</span>
+              <span className="hidden sm:inline">База: {campCoords.lat.toFixed(4)}°</span>
+              <span>({distanceToCampMeters}м)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Згорнути карту' : 'Розгорнути карту на весь екран'}
+              className="flex items-center gap-1 bg-[#14291b] hover:bg-[#1f3d29] border border-emerald-500/70 text-emerald-200 px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition active:scale-95 shadow-md cursor-pointer"
+            >
+              {isFullscreen ? (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="hidden sm:inline">Згорнути</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="hidden sm:inline">На весь екран</span>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -903,8 +973,27 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
 
-        {/* Мобільний віджет швидкої дії */}
-        <div className="lg:hidden mt-2 z-30">
+        {/* Мобільний та повноекранний віджет швидкої дії */}
+        <div className={`${isFullscreen ? 'block' : 'lg:hidden'} mt-2 z-30`}>
+          {expedition && transitProgress && isFullscreen && (
+            <div className="p-2.5 bg-[#121c15]/95 border border-amber-500/80 rounded-lg shadow-2xl space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-amber-300 font-bold truncate">
+                  Марш: {transitProgress.destData.name}
+                </span>
+                <span className="text-amber-300 font-mono font-bold shrink-0 ml-2">
+                  {transitProgress.remainingSec}с ({transitProgress.percent}%)
+                </span>
+              </div>
+              <div className="w-full bg-[#0a110c] h-2 rounded-full overflow-hidden border border-[#2b5936]">
+                <div
+                  className="bg-amber-500 h-full transition-all duration-300"
+                  style={{ width: `${transitProgress.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {!expedition && selectedTarget && !isSelectedCurrent && routeEstimates && (
             <div className="p-2.5 bg-[#121c15] border border-amber-500/80 rounded-lg shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-bottom-2">
               <div className="min-w-0 flex-1">
@@ -915,7 +1004,8 @@ export const MapView: React.FC<MapViewProps> = ({
                   <span className="text-[10px] text-[#8ea894] font-mono shrink-0">({routeEstimates.meters}м)</span>
                 </div>
                 <div className="text-[10px] text-[#718d78] font-mono mt-0.5">
-                  Час: <b className="text-emerald-300">{routeEstimates.seconds}с</b> • Ситість: <b className="text-amber-400">-{routeEstimates.hungerCost}%</b>
+                  Час: <b className="text-emerald-300">{routeEstimates.seconds}с</b> • Ситість:{' '}
+                  <b className="text-amber-400">-{routeEstimates.hungerCost}%</b>
                 </div>
               </div>
 
@@ -973,9 +1063,9 @@ export const MapView: React.FC<MapViewProps> = ({
           )}
         </div>
 
-        <div className="mt-2 pt-2 border-t border-[#1a291f] flex items-center justify-between text-[11px] text-[#718a78] z-30 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
-          <span>* Тягніть мапу для огляду • Клікайте на туман для розвідки</span>
-          <span>Тактичний радар активний</span>
+        <div className="mt-1.5 pt-1.5 border-t border-[#1a291f] flex items-center justify-between text-[10px] text-[#7c9683] z-30 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
+          <span className="truncate">* Тягніть мапу • Клікайте на туман</span>
+          <span className="shrink-0 ml-2">Радар активний</span>
         </div>
       </div>
 

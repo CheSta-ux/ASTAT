@@ -758,7 +758,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0d0b] text-[#d3ded5] font-mono selection:bg-[#2b5936] selection:text-white relative overflow-hidden flex flex-col justify-between pb-24 md:pb-0">
+    <div className="min-h-screen bg-[#0a0d0b] text-[#d3ded5] font-mono selection:bg-[#2b5936] selection:text-white relative overflow-x-hidden flex flex-col justify-between pb-24 md:pb-0">
       <div className="pointer-events-none fixed inset-0 z-50 bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.02)_0%,transparent_100%)] opacity-80" />
       <div
         className="pointer-events-none fixed inset-0 z-50 opacity-20"
