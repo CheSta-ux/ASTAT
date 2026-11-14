@@ -5,6 +5,7 @@ import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle, Skull, 
 import type { Coordinates, ExpeditionState, InventoryItem, PlayerStats, RadioMessage, TabType } from './types/game';
 import { calculateRealisticTravelTime, calculateHaversineDistanceMeters, offsetGeoBySectors } from './utils/coordinates';
 import { createSectorData } from './utils/sectorGenerator';
+import { detectGridWater, getCachedSectorTerrain } from './utils/waterDetectorService';
 import { useGameLoop } from './hooks/useGameLoop';
 import { 
   loadSectorSearchHistory, 
@@ -404,7 +405,17 @@ export default function App() {
     const distFromCamp = calculateHaversineDistanceMeters(destCoords.lat, destCoords.lng, campCoords.lat, campCoords.lng);
     const isAtCamp = distFromCamp < 50;
 
-    const destSector = (expData as any).targetSectorData || createSectorData(destCoords.lat, destCoords.lng, false, false, isAtCamp);
+    const cachedDestTerrain = getCachedSectorTerrain(destCoords.lat, destCoords.lng);
+    const destSector =
+      (expData as any).targetSectorData ||
+      createSectorData(
+        destCoords.lat,
+        destCoords.lng,
+        Boolean(cachedDestTerrain?.isWater && cachedDestTerrain?.biome === 'water'),
+        Boolean(cachedDestTerrain?.isCoast),
+        isAtCamp,
+        cachedDestTerrain?.biome
+      );
     const searchStatus = getSectorSearchStatus(destCoords.lat, destCoords.lng, sectorSearches);
 
     setCoords(destCoords);
@@ -501,7 +512,7 @@ export default function App() {
     notify(`Марш розпочато: ${estimates.meters}м. Час: ${estimates.seconds}с`, 'info');
   };
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (isUnconscious) {
       notify('Ви без свідомості! Обстеження неможливе.', 'danger');
       return;
@@ -546,9 +557,22 @@ export default function App() {
 
     // 1. УСПІШНИЙ ПОШУК (55% шанс)
     if (roll < 0.55) {
-      // Визначаємо точний біом та назву сектора під ногами виживанця
-      const currentSector = createSectorData(coords.lat, coords.lng, false, false, false);
-      const sectorBiome = currentSector.icon || currentSector.id || 'forest';
+      // Беремо реальний біом із кешу або визначаємо його по тайлах мапи
+      const cached = getCachedSectorTerrain(coords.lat, coords.lng);
+      const terrain =
+        cached ||
+        (await detectGridWater([{ lat: coords.lat, lng: coords.lng, key: sectorKey }]))[sectorKey];
+
+      const isDeepWater = Boolean(terrain?.isWater && terrain?.biome === 'water');
+      const currentSector = createSectorData(
+        coords.lat,
+        coords.lng,
+        isDeepWater,
+        Boolean(terrain?.isCoast),
+        false,
+        terrain?.biome
+      );
+      const sectorBiome = terrain?.biome || currentSector.icon || currentSector.id || 'forest';
 
       // Отримуємо лут, логічно прив'язаний до поточної місцевості
       const foundItem = getRandomLoot(sectorBiome, currentSector.name);

@@ -11,6 +11,11 @@ export type WaterClassification = SectorTerrainData;
 
 const radarCache = new Map<string, SectorTerrainData>();
 
+export function getCachedSectorTerrain(lat: number, lng: number): SectorTerrainData | undefined {
+  const key = `${lat.toFixed(5)}-${lng.toFixed(5)}`;
+  return radarCache.get(key);
+}
+
 const lon2tileFrac = (lon: number, zoom: number) => ((lon + 180) / 360) * Math.pow(2, zoom);
 const lat2tileFrac = (lat: number, zoom: number) => {
   const latRad = (lat * Math.PI) / 180;
@@ -133,7 +138,7 @@ async function sampleTerrainMap(
           ) {
             fieldVotes++;
           }
-          // 4. Забудова / Будівлі / Асфальт / Промзона (сірий або теракотовий колір споруд)
+          // 4. Забудова / Будівлі / Асфальт / Промзона
           else {
             urbanVotes++;
           }
@@ -184,15 +189,16 @@ export async function detectGridWater(
 
   if (needed.length === 0) return result;
 
-  const centerLat = sectors[12]?.lat || sectors[0].lat;
-  const centerLng = sectors[12]?.lng || sectors[0].lng;
+  const midIdx = Math.floor(sectors.length / 2);
+  const centerLat = sectors[midIdx]?.lat || sectors[0].lat;
+  const centerLng = sectors[midIdx]?.lng || sectors[0].lng;
 
   const [elevations, sampledMap] = await Promise.all([
     fetchElevations(needed),
     sampleTerrainMap(centerLat, centerLng, needed)
   ]);
 
-  // Визначаємо перепад висот місцевості для виявлення гірського рельєфу
+  // Перепад висот місцевості для виявлення гірського рельєфу
   const validElevs = elevations.filter((e): e is number => typeof e === 'number');
   const elevDiff = validElevs.length > 0 ? Math.max(...validElevs) - Math.min(...validElevs) : 0;
 
@@ -203,10 +209,10 @@ export async function detectGridWater(
 
     const waterRatio = votes.waterVotes / total;
 
-    // Рівень 1: Вода
-    const isSeaLevelWater = elev === null || elev === undefined || elev <= 1.0;
+    // Рівень 1: Вода (якщо висота невідома — покладаємося лише на тайли мапи, без хибного блокування суходолу)
+    const isSeaLevelWater = typeof elev === 'number' && elev <= 0.5;
     const isWater = isSeaLevelWater || waterRatio >= 0.65;
-    const isCoast = !isWater && (waterRatio >= 0.20 || (elev !== null && elev > 1.0 && elev <= 3.5));
+    const isCoast = !isWater && (waterRatio >= 0.20 || (typeof elev === 'number' && elev > 0.5 && elev <= 3.5));
 
     let biome: DetectedBiome = 'urban';
 
@@ -215,7 +221,7 @@ export async function detectGridWater(
     } else if (isCoast) {
       biome = 'coast';
     }
-    // Рівень 2: Гори (висота > 600м або відчутний гірський рельєф з перепадом > 70м)
+    // Рівень 2: Гори
     else if (elev !== null && (elev >= 600 || (elevDiff > 70 && elev > 300))) {
       biome = 'mountain';
     }
