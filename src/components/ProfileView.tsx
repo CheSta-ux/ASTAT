@@ -1,12 +1,49 @@
 import React from 'react';
-import type { Coordinates, PlayerStats } from '../types/game';
+import type { Coordinates, PlayerStats, Specialization } from '../types/game';
 
 interface ProfileViewProps {
   player: PlayerStats;
   campCoords: Coordinates;
 }
 
+const SPEC_SKILLS: Record<
+  Specialization,
+  {
+    primaryTitle: string;
+    primaryDesc: string;
+    secondaryTitle: string;
+    secondaryDesc: string;
+  }
+> = {
+  scout: {
+    primaryTitle: 'Легка хода (Розвідник)',
+    primaryDesc: 'Збільшує швидкість маршу на +25% (до 5.6 км/год) та скорочує час переходів.',
+    secondaryTitle: 'Орієнтування на місцевості',
+    secondaryDesc: 'Швидше пересування пересіченою місцевістю Полісся.'
+  },
+  soldier: {
+    primaryTitle: 'Загартований боєць (Штурмовик)',
+    primaryDesc: 'Максимальний запас здоровʼя збільшено на +20% (120 HP).',
+    secondaryTitle: 'Бойова пильність',
+    secondaryDesc: 'Зменшує шкоду від пасток і засідок на 33% (12 HP замість 18 HP).'
+  },
+  medic: {
+    primaryTitle: 'Польова хірургія (Медик)',
+    primaryDesc: 'Бинти та турнікети відновлюють на +50% більше здоровʼя.',
+    secondaryTitle: 'Детоксикація',
+    secondaryDesc: 'Застосування «Астат-Блоку» додатково відновлює +15 HP.'
+  },
+  engineer: {
+    primaryTitle: 'Польова фортифікація (Технік)',
+    primaryDesc: 'Перенесення базового табору коштує на 50% дешевше (50 мікросхем замість 100).',
+    secondaryTitle: 'Інженерний розрахунок',
+    secondaryDesc: 'Оптимізація витрат ресурсів на облаштування позицій.'
+  }
+};
+
 export const ProfileView: React.FC<ProfileViewProps> = ({ player, campCoords }) => {
+  const skills = SPEC_SKILLS[player.specialization] || SPEC_SKILLS.scout;
+
   return (
     <div className="bg-[#101712] border border-[#233327] rounded-lg p-5 shadow-xl flex-1 flex flex-col md:flex-row gap-6">
       <div className="w-full md:w-1/3 bg-[#131c15] border border-[#233527] rounded p-4 flex flex-col items-center text-center">
@@ -15,7 +52,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ player, campCoords }) 
             <span className="text-3xl">🪖</span>
           </div>
 
-          {/* Виводимо обраний позивний */}
           <h2 className="text-lg font-bold text-slate-100 tracking-wide font-mono">
             {player.callsign || player.name}
           </h2>
@@ -24,9 +60,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ player, campCoords }) 
           </div>
 
           <div className="text-xs text-emerald-400 font-bold uppercase tracking-wider mt-1.5">
-            КЛАС: {player.specialization === 'scout' ? 'РОЗВІДНИК ПУСТОШІВ' :
-                    player.specialization === 'soldier' ? 'ШТУРМОВИК' :
-                    player.specialization === 'medic' ? 'ПОЛЬОВИЙ МЕДИК' : 'ТЕХНІК-ІНЖЕНЕР'}
+            КЛАС:{' '}
+            {player.specialization === 'scout'
+              ? 'РОЗВІДНИК ПУСТОШІВ'
+              : player.specialization === 'soldier'
+              ? 'ШТУРМОВИК'
+              : player.specialization === 'medic'
+              ? 'ПОЛЬОВИЙ МЕДИК'
+              : 'ТЕХНІК-ІНЖЕНЕР'}
           </div>
         </div>
 
@@ -34,6 +75,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ player, campCoords }) 
           <div className="flex justify-between">
             <span className="text-[#6d8574]">Громадянство:</span>
             <span className="font-semibold text-slate-200">{player.citizenship}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[#6d8574]">Макс. здоровʼя:</span>
+            <span className="font-semibold text-emerald-400">{player.maxHp} HP</span>
           </div>
           <div className="flex justify-between">
             <span className="text-[#6d8574]">Досліджено секторів:</span>
@@ -59,12 +104,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ player, campCoords }) 
           </h3>
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <div className="bg-[#131d16] p-3 rounded border border-[#223326]">
-              <div className="font-bold text-emerald-300">Легка хода (Розвідник)</div>
-              <div className="text-[#7d9984] mt-1">Зменшує час AFK-експедицій на 25%.</div>
+              <div className="font-bold text-emerald-300">{skills.primaryTitle}</div>
+              <div className="text-[#7d9984] mt-1">{skills.primaryDesc}</div>
             </div>
             <div className="bg-[#131d16] p-3 rounded border border-[#223326]">
-              <div className="font-bold text-yellow-300">Ізотопний резонанс</div>
-              <div className="text-[#7d9984] mt-1">Вищий шанс знайти Астат-211 у глибоких воронках.</div>
+              <div className="font-bold text-yellow-300">{skills.secondaryTitle}</div>
+              <div className="text-[#7d9984] mt-1">{skills.secondaryDesc}</div>
             </div>
           </div>
 
@@ -77,17 +122,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ player, campCoords }) 
             )}
             {player.conditions.includes('comfort') && (
               <div className="bg-[#132619] border border-emerald-600/50 p-2.5 rounded text-emerald-200">
-                <b>🏠 Домашній затишок:</b> Відновлення сил у Базовому Таборі. Сповільнює падіння ситості.
+                <b>🏠 Домашній затишок:</b> Відновлення сил у Базовому Таборі. Захищає від виснаження.
               </div>
             )}
             {player.conditions.includes('bleeding') && (
               <div className="bg-[#291111] border border-red-600/50 p-2.5 rounded text-red-200">
-                <b>🩸 Глибока кровотеча:</b> Періодично знімає 2 HP та збільшує час будь-якого переходу вдвічі. Зупиняється бинтом.
+                <b>🩸 Глибока кровотеча:</b> Кожні 15 секунд знімає 2 HP та збільшує час будь-якого переходу вдвічі. Зупиняється бинтом.
               </div>
             )}
             {player.conditions.includes('radiation') && (
               <div className="bg-[#2b210e] border border-amber-600/50 p-2.5 rounded text-amber-200">
-                <b>☣️ Променеве отруєння:</b> Викликає завади в радіоефірі та спотворює повідомлення. Потрібен "Астат-Блок".
+                <b>☣️ Променеве отруєння:</b> Викликає завади в радіоефірі та спотворює повідомлення. Потрібен «Астат-Блок».
               </div>
             )}
             {player.conditions.includes('zombified') && (

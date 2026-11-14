@@ -2,7 +2,7 @@ import './App.css';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle, Skull, Lock } from 'lucide-react';
 
-import type { Coordinates, ExpeditionState, InventoryItem, PlayerStats, RadioMessage, TabType } from './types/game';
+import type { Coordinates, ExpeditionState, InventoryItem, PlayerCondition, PlayerStats, RadioMessage, TabType } from './types/game';
 import { calculateRealisticTravelTime, calculateHaversineDistanceMeters, offsetGeoBySectors } from './utils/coordinates';
 import { createSectorData } from './utils/sectorGenerator';
 import { detectGridWater, getCachedSectorTerrain } from './utils/waterDetectorService';
@@ -164,14 +164,16 @@ export default function App() {
       .maybeSingle()
       .then(({ data, error }) => {
         if (!error && data) {
+          const loadedSpec = data.specialization || 'scout';
+          const computedMaxHp = loadedSpec === 'soldier' ? 120 : 100;
           setPlayer((prev) => ({
             ...prev,
             name: data.callsign || 'Виживший',
             callsign: data.callsign || 'Виживший',
             citizenship: data.citizenship || 'Україна 🇺🇦',
-            specialization: data.specialization || 'scout',
-            hp: data.hp ?? 100,
-            maxHp: 100,
+            specialization: loadedSpec,
+            hp: Math.min(computedMaxHp, data.hp ?? computedMaxHp),
+            maxHp: computedMaxHp,
             hunger: data.hunger ?? 100,
             maxHunger: 100,
             astatCoins: data.microchips ?? 0,
@@ -376,12 +378,19 @@ export default function App() {
     setExpedition(null);
     setInventory([]); // Речі залишаються на секторі
 
+    const respawnMaxHp = player.specialization === 'soldier' ? 120 : 100;
+    const respawnHp = player.specialization === 'soldier' ? 72 : 60;
+    const preservedConditions: PlayerCondition[] = player.conditions.includes('zombified')
+      ? ['comfort', 'zombified']
+      : ['comfort'];
+
     const respawnedPlayer: PlayerStats = {
       ...player,
-      hp: 60,
+      hp: respawnHp,
+      maxHp: respawnMaxHp,
       hunger: 60,
-      astatCoins: 0, // Плати зникають
-      conditions: ['comfort']
+      astatCoins: 0,
+      conditions: preservedConditions
     };
 
     setPlayer(respawnedPlayer);
@@ -471,7 +480,8 @@ export default function App() {
     setExpedition,
     onExpeditionComplete: handleExpeditionComplete,
     player,
-    setPlayer
+    setPlayer,
+    onNotify: notify
   });
 
   const handleStartExpedition = (targetCoordObj: Coordinates) => {
@@ -578,9 +588,16 @@ export default function App() {
       const foundItem = getRandomLoot(sectorBiome, currentSector.name);
 
       if (foundItem.id === 'microchip') {
-        const chipsCount = foundItem.count || 1;
-        nextPlayer.astatCoins += chipsCount;
-        notify(`📟 Знайдено кремнієву плату: +${chipsCount} мікросхему!`, 'success');
+        const rawChips = foundItem.count || 1;
+        const isZombified = nextPlayer.conditions.includes('zombified');
+
+        if (isZombified && Math.random() >= 0.2) {
+          notify('💀 Знайдено пошкоджену мікросхему — через клеймо «Зомбований» (-80%) плата непридатна!', 'warn');
+        } else {
+          const finalChips = isZombified ? Math.max(1, Math.floor(rawChips * 0.2)) : rawChips;
+          nextPlayer.astatCoins += finalChips;
+          notify(`📟 Знайдено кремнієву плату: +${finalChips} мікросхему!`, 'success');
+        }
       } else {
         const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
         if (idx >= 0) {
@@ -601,7 +618,8 @@ export default function App() {
         notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count || 1})`, notifyType);
       }
     } else if (roll < 0.80) {
-      const nextHp = Math.max(0, player.hp - 18);
+      const trapDamage = player.specialization === 'soldier' ? 12 : 18;
+      const nextHp = Math.max(0, player.hp - trapDamage);
       nextPlayer.hp = nextHp;
 
       if (!nextPlayer.conditions.includes('bleeding')) {
@@ -662,14 +680,15 @@ export default function App() {
       notify('Табір уже розбитий тут.', 'info');
       return;
     }
-    if (player.astatCoins < 100) {
-      notify('Для перенесення потрібно 100 мікросхем!', 'danger');
+    const relocateCost = player.specialization === 'engineer' ? 50 : 100;
+    if (player.astatCoins < relocateCost) {
+      notify(`Для перенесення потрібно ${relocateCost} мікросхем!`, 'danger');
       return;
     }
 
-    spendMicrochips(100);
+    spendMicrochips(relocateCost);
     setCampCoords({ ...coords });
-    notify(`Табір перенесено на нові GPS: ${coords.lat.toFixed(5)}° N! (-100 мікросхем)`, 'success');
+    notify(`Табір перенесено на нові GPS: ${coords.lat.toFixed(5)}° N! (-${relocateCost} мікросхем)`, 'success');
     syncGameState(undefined, undefined, undefined, coords);
   };
 
@@ -682,10 +701,11 @@ export default function App() {
       updatedPlayer.hunger = Math.min(player.maxHunger, player.hunger + item.value);
       notify(`Вжито ${item.name}. Ситість +${item.value}%`, 'success');
     } else if (item.type === 'medical_bleed' || item.type.startsWith('medical')) {
-      const healAmount = item.value || 20;
+      const baseHeal = item.value || 20;
+      const healAmount = player.specialization === 'medic' ? Math.round(baseHeal * 1.5) : baseHeal;
       const nextHp = Math.min(player.maxHp, player.hp + healAmount);
       updatedPlayer.hp = nextHp;
-      
+
       updatedPlayer.conditions = player.conditions.filter((c) => c !== 'bleeding' && c !== 'unconscious');
 
       if (player.hp <= 0 && nextHp > 0) {
@@ -695,7 +715,12 @@ export default function App() {
       }
     } else if (item.type === 'medical_rad') {
       updatedPlayer.conditions = player.conditions.filter((c) => c !== 'radiation');
-      notify('Антирад нейтралізував радіацію!', 'success');
+      if (player.specialization === 'medic') {
+        updatedPlayer.hp = Math.min(player.maxHp, player.hp + 15);
+        notify('Антирад нейтралізував радіацію! Бонус медика: +15 HP.', 'success');
+      } else {
+        notify('Антирад нейтралізував радіацію!', 'success');
+      }
     }
 
     const nextInventory = inventory
@@ -999,6 +1024,10 @@ export default function App() {
           onComplete={async (data) => {
             const isWater = Boolean(data.isWaterSpawn);
 
+            const isSoldier = data.specialization === 'soldier';
+            const startMaxHp = isSoldier ? 120 : 100;
+            const startHp = isWater ? 35 : isSoldier ? 102 : player.hp;
+
             const updatedPlayer: PlayerStats = {
               ...player,
               name: data.callsign,
@@ -1007,7 +1036,8 @@ export default function App() {
               specialization: data.specialization,
               aggressorReason: data.aggressorReason,
               astatCoins: 0,
-              hp: isWater ? 35 : player.hp,
+              hp: startHp,
+              maxHp: startMaxHp,
               hunger: isWater ? 25 : player.hunger,
               conditions: data.isZombified 
                 ? Array.from(new Set([...player.conditions, 'zombified'])) 

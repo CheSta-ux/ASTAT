@@ -149,7 +149,17 @@ export const MapView: React.FC<MapViewProps> = ({
   const distanceToCampMeters = useMemo(() => {
     return Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng));
   }, [coords.lat, coords.lng, campCoords.lat, campCoords.lng]);
+
   const isAtCamp = distanceToCampMeters < 50;
+
+  const effectiveSpeedKmh = useMemo(() => {
+    let speed = 4.5;
+    if (player.specialization === 'scout') speed *= 1.25;
+    if (player.conditions.includes('bleeding')) speed *= 0.5;
+    return speed.toFixed(1);
+  }, [player.specialization, player.conditions]);
+
+  const relocateCampCost = player.specialization === 'engineer' ? 50 : 100;
 
   // Динамічний буфер тайлів OpenTopoMap
   const visibleTiles = useMemo(() => {
@@ -1027,7 +1037,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 <div className="p-2 rounded bg-[#121c15] border border-[#223828]">
                   <span className="text-[#6d8a74] block text-[9.5px]">ШВИДКІСТЬ ХОДУ:</span>
                   <b className="text-emerald-400 mt-0.5 block">
-                    {player.specialization === 'scout' ? '5.6 км/год' : '4.5 км/год'}
+                    {effectiveSpeedKmh} км/год
                   </b>
                 </div>
               </div>
@@ -1116,7 +1126,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   className="py-2 px-2 bg-[#17261d] hover:bg-[#22382b] disabled:bg-[#131c15] disabled:text-[#425246] border border-[#284732] disabled:border-[#1d2920] text-xs font-semibold rounded text-emerald-300 transition flex items-center justify-center gap-1.5"
                 >
                   <Tent className="w-3.5 h-3.5 shrink-0" />
-                  <span>Перенести (100 плат)</span>
+                  <span>Перенести ({relocateCampCost} плат)</span>
                 </button>
               </div>
             </div>
@@ -1140,7 +1150,7 @@ export const MapView: React.FC<MapViewProps> = ({
           ) : routeEstimates ? (
             <div className="mt-4 pt-3 border-t border-[#233327] bg-[#141d16] p-3 rounded border border-[#2c4232]">
               <div className="text-[10px] text-yellow-400 font-bold uppercase tracking-wider">
-                {selectedTarget.isFog ? 'РОЗВІДКА НЕВІДОМОЇ ЗОНИ' : 'ПРОРАХУНОК МАРШУ (4.5 КМ/ГОД)'}
+                {selectedTarget.isFog ? 'РОЗВІДКА НЕВІДОМОЇ ЗОНИ' : `ПРОРАХУНОК МАРШУ (${effectiveSpeedKmh} КМ/ГОД)`}
               </div>
               <div className="text-xs font-bold text-slate-100 mt-0.5 flex items-center justify-between">
                 <span>{selectedTarget.isFog ? 'Нерозвіданий сектор' : selectedTarget.data.name}</span>
