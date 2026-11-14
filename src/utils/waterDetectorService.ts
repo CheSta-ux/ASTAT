@@ -1,4 +1,4 @@
-export type DetectedBiome = 'water' | 'coast' | 'mountain' | 'forest' | 'field' | 'urban';
+export type DetectedBiome = 'water' | 'coast' | 'mountain' | 'forest' | 'field' | 'road' | 'urban';
 
 export interface SectorTerrainData {
   isWater: boolean;
@@ -9,10 +9,9 @@ export interface SectorTerrainData {
 
 export type WaterClassification = SectorTerrainData;
 
-const TERRAIN_STORAGE_KEY = 'astat_terrain_cache_v2';
+const TERRAIN_STORAGE_KEY = 'astat_terrain_cache_v3';
 const radarCache = new Map<string, SectorTerrainData>();
 
-// Відновлення кешу біомів із localStorage при старті (прибирає мерехтіння при перезавантаженні)
 try {
   const saved = localStorage.getItem(TERRAIN_STORAGE_KEY);
   if (saved) {
@@ -77,12 +76,21 @@ const loadCorsTileImage = (x: number, y: number, z: number): Promise<HTMLImageEl
   });
 };
 
-// Динамічний аналіз тайлів під усі передані сектори (охоплює не лише 300м, а всю розвідану область)
+interface PixelVotes {
+  waterVotes: number;
+  forestVotes: number;
+  fieldVotes: number;
+  roadVotes: number;
+  urbanVotes: number;
+  total: number;
+}
+
+// Аналіз пікселів мапи з виділенням води, лісу, полів, доріг та забудови
 async function sampleTerrainMap(
   sectors: { lat: number; lng: number; key: string }[],
   zoom = 16
-): Promise<Record<string, { waterVotes: number; forestVotes: number; fieldVotes: number; urbanVotes: number; total: number }>> {
-  const results: Record<string, { waterVotes: number; forestVotes: number; fieldVotes: number; urbanVotes: number; total: number }> = {};
+): Promise<Record<string, PixelVotes>> {
+  const results: Record<string, PixelVotes> = {};
   if (sectors.length === 0) return results;
 
   const tileXs = sectors.map((s) => Math.floor(lon2tileFrac(s.lng, zoom)));
@@ -92,7 +100,6 @@ async function sampleTerrainMap(
   const centerTileX = Math.floor(lon2tileFrac(sectors[midIdx].lng, zoom));
   const centerTileY = Math.floor(lat2tileFrac(sectors[midIdx].lat, zoom));
 
-  // Обмежуємо максимальний розмір сітки 6x6 тайлів (~2.3 км), щоб не перевантажувати браузер
   const minTileX = Math.max(centerTileX - 3, Math.min(...tileXs));
   const maxTileX = Math.min(centerTileX + 3, Math.max(...tileXs));
   const minTileY = Math.max(centerTileY - 3, Math.min(...tileYs));
@@ -141,10 +148,10 @@ async function sampleTerrainMap(
     let waterVotes = 0;
     let forestVotes = 0;
     let fieldVotes = 0;
+    let roadVotes = 0;
     let urbanVotes = 0;
     let total = 0;
 
-    // Вибірка 49 точок по всій площі сектора 100х100м
     const radius = 12;
     const step = 4;
 
@@ -166,15 +173,19 @@ async function sampleTerrainMap(
           if (b >= 180 && (b - r) >= 16 && g >= 155) {
             waterVotes++;
           }
-          // 2. Ліс / Хащі / Парки / Посадки (переважання зеленого каналу)
+          // 2. Ліс / Хащі / Парки / Посадки
           else if (g > r + 7 && g > b + 10 && g >= 120) {
             forestVotes++;
           }
-          // 3. Відкриті поля / луки / сільгоспугіддя
-          else if (g >= r - 3 && g > b + 7 && r >= 165 && g >= 175) {
+          // 3. Відкриті поля / луки / рілля
+          else if (g >= r - 2 && g > b + 8 && r >= 165 && g >= 175) {
             fieldVotes++;
           }
-          // 4. Забудова / Будівлі / Асфальт / Промзона
+          // 4. Автошляхи, траси та путівці (білі/жовтогарячі лінії на OSM)
+          else if ((r >= 235 && g >= 235 && b >= 235) || (r >= 215 && g >= 160 && (r - b) >= 32)) {
+            roadVotes++;
+          }
+          // 5. Капітальна забудова / споруди / промзони
           else {
             urbanVotes++;
           }
@@ -185,13 +196,12 @@ async function sampleTerrainMap(
       }
     }
 
-    results[s.key] = { waterVotes, forestVotes, fieldVotes, urbanVotes, total };
+    results[s.key] = { waterVotes, forestVotes, fieldVotes, roadVotes, urbanVotes, total };
   }
 
   return results;
 }
 
-// Запит висот рельєфу
 async function fetchElevations(points: { lat: number; lng: number }[]): Promise<(number | null)[]> {
   try {
     const lats = points.map((p) => p.lat.toFixed(5)).join(',');
@@ -208,7 +218,6 @@ async function fetchElevations(points: { lat: number; lng: number }[]): Promise<
   }
 }
 
-// Головний тактичний аналізатор біомів
 export async function detectGridWater(
   sectors: { lat: number; lng: number; key: string }[]
 ): Promise<Record<string, SectorTerrainData>> {
@@ -225,7 +234,6 @@ export async function detectGridWater(
 
   if (needed.length === 0) return result;
 
-  // Розбиваємо на батчі по 60 точок для стабільної роботи Open-Meteo та тайлів
   const batch = needed.slice(0, 60);
 
   const [elevations, sampledMap] = await Promise.all([
@@ -248,7 +256,6 @@ export async function detectGridWater(
     const total = votes.total;
     const waterRatio = votes.waterVotes / total;
 
-    // Рівень 1: Вода
     const isSeaLevelWater = typeof elev === 'number' && elev <= 0.5;
     const isWater = isSeaLevelWater || waterRatio >= 0.65;
     const isCoast = !isWater && (waterRatio >= 0.20 || (typeof elev === 'number' && elev > 0.5 && elev <= 3.5));
@@ -259,18 +266,19 @@ export async function detectGridWater(
       biome = 'water';
     } else if (isCoast) {
       biome = 'coast';
-    }
-    // Рівень 2: Гори
-    else if (elev !== null && (elev >= 600 || (elevDiff > 70 && elev > 300))) {
+    } else if (elev !== null && (elev >= 600 || (elevDiff > 70 && elev > 300))) {
       biome = 'mountain';
-    }
-    // Рівень 3: Природний покрив проти забудови (дорога крізь ліс не перетворює ліс на завод)
-    else if (votes.forestVotes >= votes.fieldVotes && votes.forestVotes >= 3) {
+    } else if (votes.roadVotes >= 4 && votes.urbanVotes < votes.roadVotes * 2) {
+      // Дорога або путівець, що проходить крізь ліс, поле чи околицю
+      biome = 'road';
+    } else if (votes.forestVotes >= votes.fieldVotes && votes.forestVotes >= 3) {
       biome = 'forest';
     } else if (votes.fieldVotes > votes.forestVotes && votes.fieldVotes >= 3) {
       biome = 'field';
     } else if (votes.urbanVotes > votes.forestVotes + votes.fieldVotes) {
       biome = 'urban';
+    } else if (votes.roadVotes >= 2) {
+      biome = 'road';
     } else {
       biome = 'forest';
     }

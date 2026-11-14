@@ -51,9 +51,80 @@ loadLootFromSupabase();
 const getBiomeMultiplier = (itemId: string, category: string | undefined, biome: string): number => {
   const b = biome.toLowerCase();
 
-  // 1. ЛІСОВІ СЕКТОРИ (forest, посадки, хащі, ліс)
-  if (b.includes('forest') || b.includes('ліс') || b.includes('гай') || b.includes('посадк')) {
-    // Природний лісовий лут (смола, гілки, ягоди, гриби, палиці)
+  // 1. ДОРОГИ, ПУТІВЦІ ТА УЗБІЧЧЯ (перевіряємо до лісу, щоб "Лісова колія" не потрапляла в чистий ліс)
+  if (
+    b.includes('road') ||
+    b.includes('highway') ||
+    b.includes('railway') ||
+    b.includes('дорог') ||
+    b.includes('колія') ||
+    b.includes('узбіч') ||
+    b.includes('шлях') ||
+    b.includes('проїзд')
+  ) {
+    if (category === 'nature' || ['pine_branches', 'pine_resin', 'birch_bark', 'wild_berries', 'forest_mushrooms', 'wheat_stalks'].includes(itemId)) {
+      return 0.0;
+    }
+    if (['empty_cans', 'broken_glass', 'rusty_nail', 'rag', 'old_newspaper'].includes(itemId)) return 2.8;
+    if (['duct_tape', 'batteries', 'copper_wire', 'scrap', 'bale_wire'].includes(itemId)) return 1.8;
+    if (['energy_bar', 'dirty_water', 'bandage', 'energy_water'].includes(itemId)) return 1.4;
+    if (['microchip', 'ration', 'canned_meat', 'tourniquet', 'rad_pills'].includes(itemId)) return 0.5;
+    return 0.6;
+  }
+
+  // 2. ЗАВОДИ, ПІДСТАНЦІЇ, МАЙСТЕРНІ, АНГАРИ ТА ПРОМЗОНИ
+  if (
+    b.includes('factory') ||
+    b.includes('bunker') ||
+    b.includes('depot') ||
+    b.includes('завод') ||
+    b.includes('ангар') ||
+    b.includes('майстерн') ||
+    b.includes('підстанц') ||
+    b.includes('промислов') ||
+    b.includes('промзон')
+  ) {
+    if (category === 'nature') return 0.0;
+    if (['microchip', 'copper_wire', 'batteries', 'fuse', 'lead_plate'].includes(itemId)) return 3.5;
+    if (['scrap', 'duct_tape', 'antiseptic', 'radio_station', 'encrypted_drive'].includes(itemId)) return 2.2;
+    if (['ration', 'tourniquet', 'antirad'].includes(itemId)) return 1.4;
+    return 1.0;
+  }
+
+  // 3. РУЇНИ, САДИБИ, КОРПУСИ ТА ЗАБУДОВА
+  if (
+    b.includes('ruin') ||
+    b.includes('build') ||
+    b.includes('urban') ||
+    b.includes('садиб') ||
+    b.includes('споруд') ||
+    b.includes('селищ') ||
+    b.includes('корпус') ||
+    b.includes('будівел') ||
+    b.includes('розвалин')
+  ) {
+    if (category === 'nature' || ['pine_branches', 'pine_resin', 'birch_bark', 'wild_berries', 'forest_mushrooms', 'wheat_stalks'].includes(itemId)) {
+      return 0.0;
+    }
+    if (['microchip', 'copper_wire', 'batteries', 'fuse', 'duct_tape', 'lead_plate', 'antiseptic'].includes(itemId)) return 2.5;
+    if (['scrap', 'broken_glass', 'rusty_nail', 'empty_cans', 'old_newspaper', 'rag', 'child_toy'].includes(itemId)) return 2.0;
+    if (['ration', 'canned_meat', 'energy_bar', 'bandage', 'tourniquet', 'rad_pills', 'antirad'].includes(itemId)) return 1.5;
+    if (['radio_station', 'encrypted_drive'].includes(itemId)) return 1.2;
+    return 1.0;
+  }
+
+  // 4. ЛІСОВІ СЕКТОРИ (хвойний масив, бір, гай, посадка, хащі, просіка, вітролом)
+  if (
+    b.includes('forest') ||
+    b.includes('ліс') ||
+    b.includes('гай') ||
+    b.includes('посадк') ||
+    b.includes('хащ') ||
+    b.includes('бір') ||
+    b.includes('просік') ||
+    b.includes('вітролом') ||
+    b.includes('вибалок')
+  ) {
     if (['pine_branches', 'pine_resin', 'birch_bark', 'stout_stick'].includes(itemId)) return 4.0;
     if (['wild_berries', 'forest_mushrooms', 'spring_water'].includes(itemId)) return 3.5;
     if (['moss_sphagnum', 'toxic_mushroom', 'rusty_trap', 'shotgun_shell'].includes(itemId)) return 2.0;
@@ -67,30 +138,26 @@ const getBiomeMultiplier = (itemId: string, category: string | undefined, biome:
     return 0.1;
   }
 
-  // 2. РУЇНИ / СПОРУДИ / КПП / СЕЛА (ruins, building, village, urban, highway)
-  if (b.includes('ruin') || b.includes('build') || b.includes('urban') || b.includes('село') || b.includes('highway') || b.includes('railway')) {
-    // У залізобетонних руїнах КПП не росте свіжа смола та лісові лисички
-    if (category === 'nature' || ['pine_branches', 'pine_resin', 'birch_bark', 'wild_berries', 'forest_mushrooms', 'wheat_stalks'].includes(itemId)) {
-      return 0.0;
-    }
-    if (['microchip', 'copper_wire', 'batteries', 'fuse', 'duct_tape', 'lead_plate', 'antiseptic'].includes(itemId)) return 2.5;
-    if (['scrap', 'broken_glass', 'rusty_nail', 'empty_cans', 'old_newspaper', 'rag', 'child_toy'].includes(itemId)) return 2.0;
-    if (['ration', 'canned_meat', 'energy_bar', 'bandage', 'tourniquet', 'rad_pills', 'antirad'].includes(itemId)) return 1.5;
-    if (['radio_station', 'encrypted_drive'].includes(itemId)) return 1.2;
-    return 1.0;
-  }
-
-  // 3. ЗАВОДИ / СКЛАДИ / БУНКЕРИ (factory, depot, bunker)
-  if (b.includes('factory') || b.includes('bunker') || b.includes('depot') || b.includes('завод') || b.includes('база')) {
-    if (category === 'nature') return 0.0;
-    if (['microchip', 'copper_wire', 'batteries', 'fuse', 'lead_plate'].includes(itemId)) return 3.5;
-    if (['scrap', 'duct_tape', 'antiseptic', 'radio_station', 'encrypted_drive'].includes(itemId)) return 2.0;
-    if (['ration', 'tourniquet', 'antirad'].includes(itemId)) return 1.5;
-    return 1.0;
-  }
-
-  // 4. ПОЛЯ ТА СТЕПОВІ ПУСТОШІ (field, hills)
-  if (b.includes('field') || b.includes('hills') || b.includes('поле') || b.includes('пустош')) {
+  // 5. ПОЛЯ, ЛУКИ, РІЛЛЯ ТА КАМ'ЯНИСТІ ВИСОЧИНИ
+  if (
+    b.includes('field') ||
+    b.includes('hills') ||
+    b.includes('mountain') ||
+    b.includes('поле') ||
+    b.includes('лук') ||
+    b.includes('рілл') ||
+    b.includes('пустир') ||
+    b.includes('рівнин') ||
+    b.includes('пасовищ') ||
+    b.includes('переліг') ||
+    b.includes('схил') ||
+    b.includes('уступ') ||
+    b.includes('пагорб') ||
+    b.includes('кар\'єр') ||
+    b.includes('кряж') ||
+    b.includes('урвищ') ||
+    b.includes('сідловин')
+  ) {
     if (['wheat_stalks', 'rosehip', 'wild_garlic', 'flint_stone', 'bale_wire'].includes(itemId)) return 3.5;
     if (['stout_stick', 'wild_berries'].includes(itemId)) return 1.5;
     if (['rusty_nail', 'empty_cans', 'broken_glass', 'scrap'].includes(itemId)) return 1.2;
@@ -98,16 +165,34 @@ const getBiomeMultiplier = (itemId: string, category: string | undefined, biome:
     return 0.3;
   }
 
-  // 5. БОЛОТА ТА ДРАГОВИНИ (swamp, water)
-  if (b.includes('swamp') || b.includes('water') || b.includes('болот')) {
+  // 6. БЕРЕГОВА СМУГА, ЗАПЛАВИ ТА ЗАБОЛОЧЕНІ НИЗИНИ
+  if (
+    b.includes('swamp') ||
+    b.includes('water') ||
+    b.includes('coast') ||
+    b.includes('берег') ||
+    b.includes('низин') ||
+    b.includes('мілин') ||
+    b.includes('заплав') ||
+    b.includes('місток') ||
+    b.includes('болот')
+  ) {
     if (['moss_sphagnum', 'dirty_water', 'toxic_mushroom'].includes(itemId)) return 3.5;
-    if (['empty_cans', 'broken_glass', 'rag'].includes(itemId)) return 1.2;
+    if (['empty_cans', 'broken_glass', 'rag', 'bale_wire'].includes(itemId)) return 1.2;
     if (['microchip', 'batteries', 'pine_resin'].includes(itemId)) return 0.02;
     return 0.4;
   }
 
-  // 6. АНОМАЛЬНІ СЕКТОРИ (crater, anomaly)
-  if (b.includes('crater') || b.includes('anomaly') || b.includes('аномал')) {
+  // 7. АНОМАЛЬНІ СЕКТОРИ
+  if (
+    b.includes('crater') ||
+    b.includes('anomaly') ||
+    b.includes('аномал') ||
+    b.includes('воронк') ||
+    b.includes('розлом') ||
+    b.includes('викривлен') ||
+    b.includes('викид')
+  ) {
     if (['astat_shard', 'anomaly_crystal', 'radioactive_dust', 'quantum_capacitor'].includes(itemId)) return 6.0;
     if (['scrap', 'broken_glass'].includes(itemId)) return 1.5;
     return 0.1;
