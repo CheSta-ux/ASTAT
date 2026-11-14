@@ -948,6 +948,7 @@ export default function App() {
             onRelocateCamp={handleRelocateCamp}
             sectorSearches={sectorSearches}
             exploredSectors={exploredSectors}
+            notifications={notifications}
             onOpenAfkModal={() => setShowAfkModal(true)}
           />
         )}

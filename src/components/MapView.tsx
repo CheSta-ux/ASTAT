@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  MapPin, Eye, Bed, Tent, Footprints, AlertCircle, Waves, 
+  MapPin, Eye, Bed, Tent, Footprints, AlertCircle, AlertTriangle, Waves, 
   Building2, Factory, Route, Anchor, 
   Compass, Ship, Zap, Mountain, Crosshair, Wheat, TreePine, 
   Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed, Maximize2, Minimize2
 } from 'lucide-react';
-import type { Coordinates, ExpeditionState, PlayerStats, SectorDefinition } from '../types/game';
+import type { Coordinates, ExpeditionState, NotificationState, PlayerStats, SectorDefinition } from '../types/game';
 import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisticTravelTime } from '../utils/coordinates';
 import { createSectorData } from '../utils/sectorGenerator';
 import type { SectorSearchRecord } from '../utils/sectorCooldownManager';
@@ -33,6 +33,7 @@ interface MapViewProps {
   onRelocateCamp: () => void;
   sectorSearches: Record<string, SectorSearchRecord>;
   exploredSectors: string[];
+  notifications?: NotificationState[];
   onOpenAfkModal?: () => void;
 }
 
@@ -85,6 +86,7 @@ export const MapView: React.FC<MapViewProps> = ({
   onRelocateCamp,
   sectorSearches,
   exploredSectors = [],
+  notifications = [],
   onOpenAfkModal
 }) => {
   const zoom = 16;
@@ -756,6 +758,29 @@ export const MapView: React.FC<MapViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Push-сповіщення всередині повноекранного шару (#top-layer) */}
+        {isFullscreen && notifications.length > 0 && (
+          <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-1.5 pointer-events-none max-w-[92vw] w-max">
+            {notifications.map((n) => (
+              <div
+                key={n.id}
+                className={`px-3.5 py-2 rounded border shadow-2xl flex items-center gap-2 text-xs transition-all duration-300 animate-in fade-in slide-in-from-top-2 ${
+                  n.type === 'danger'
+                    ? 'bg-[#260f0f]/95 border-red-500 text-red-200'
+                    : n.type === 'warn'
+                    ? 'bg-[#291e0a]/95 border-amber-500 text-amber-200'
+                    : n.type === 'success'
+                    ? 'bg-[#0f2918]/95 border-emerald-500 text-emerald-200'
+                    : 'bg-[#141b16]/95 border-[#3b5e43] text-[#cfdcce]'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span className="font-semibold">{n.msg}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Контейнер карти */}
         <div 
