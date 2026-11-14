@@ -641,7 +641,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
-      <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative min-h-[540px] lg:min-h-[660px]">
+      <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-3 md:p-4 flex flex-col justify-between shadow-2xl relative min-h-[390px] sm:min-h-[480px] lg:min-h-[640px]">
         
         {/* Верхня панель */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-2 text-xs z-30">
@@ -748,7 +748,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   )}
                 </div>
               </div>
-              <span className="text-[8px] font-mono font-bold text-emerald-300 bg-[#06120a]/90 px-1.5 py-0.5 rounded border border-emerald-700/80 mt-1 shadow drop-shadow whitespace-nowrap">
+              <span className="text-[9.5px] font-mono font-bold text-emerald-300 bg-[#06120a]/90 px-1.5 py-0.5 rounded border border-emerald-700/80 mt-1 shadow drop-shadow whitespace-nowrap">
                 {isAtCamp ? 'ТАБІР (ВИ ТУТ)' : 'ВИ ТУТ'}
               </span>
             </div>
@@ -819,7 +819,7 @@ export const MapView: React.FC<MapViewProps> = ({
                         )}
                       </div>
                     </div>
-                    <span className={`text-[7.5px] font-mono font-bold mt-0.5 leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${
+                    <span className={`text-[9.5px] font-mono font-bold mt-0.5 leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,1)] ${
                       sector.isExpeditionDestination ? 'text-amber-300' : 'text-yellow-300'
                     }`}>
                       {sector.distanceMeters}м
@@ -1165,7 +1165,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 GPS: {selectedTarget.lat.toFixed(5)}° N, {selectedTarget.lng.toFixed(5)}° E
               </div>
 
-              <div className="text-[11px] text-[#869b8b] mt-1 space-y-0.5">
+              <div className="text-[11px] text-[#a6bdab] mt-1 space-y-0.5">
                 <div>Дистанція: <b className="text-slate-200">{routeEstimates.meters} м</b></div>
                 <div>Витрата ситості: ~<b className="text-amber-400">-{routeEstimates.hungerCost}%</b></div>
                 <div>

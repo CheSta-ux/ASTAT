@@ -758,7 +758,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0d0b] text-[#c6d1c8] font-mono selection:bg-[#2b5936] selection:text-white relative overflow-hidden flex flex-col justify-between pb-20 md:pb-0">
+    <div className="min-h-screen bg-[#0a0d0b] text-[#d3ded5] font-mono selection:bg-[#2b5936] selection:text-white relative overflow-hidden flex flex-col justify-between pb-24 md:pb-0">
       <div className="pointer-events-none fixed inset-0 z-50 bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.02)_0%,transparent_100%)] opacity-80" />
       <div
         className="pointer-events-none fixed inset-0 z-50 opacity-20"
@@ -769,7 +769,7 @@ export default function App() {
       />
 
       {/* Push-сповіщення */}
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-1.5 pointer-events-none max-w-[92vw] w-auto">
+      <div className="fixed top-[68px] sm:top-16 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-1.5 pointer-events-none max-w-[94vw] w-auto">
         {notifications.map((n) => (
           <div
             key={n.id}
@@ -793,29 +793,33 @@ export default function App() {
 
       {/* Банер маршу в дорозі */}
       {expedition && activeTab !== 'map' && (
-        <div className="bg-[#142318] border-b border-[#2b5936] px-3 py-2 text-xs z-30">
-          <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Footprints className="w-4 h-4 text-emerald-400 animate-bounce" />
-              <div>
-                <span className="text-emerald-300 font-semibold">
-                  Триває марш на точку {(expedition as any).targetCoords ? `${(expedition as any).targetCoords.lat.toFixed(4)}° N, ${(expedition as any).targetCoords.lng.toFixed(4)}° E` : ''}
+        <div className="bg-[#142318] border-b border-[#2b5936] px-3 py-2.5 text-xs z-30">
+          <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center justify-between sm:justify-start gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Footprints className="w-4 h-4 text-emerald-400 animate-bounce shrink-0" />
+                <span className="text-emerald-300 font-semibold truncate">
+                  Марш на {(expedition as any).targetCoords ? `${(expedition as any).targetCoords.lat.toFixed(4)}° N, ${(expedition as any).targetCoords.lng.toFixed(4)}° E` : 'точку'}
                 </span>
-                <span className="text-[#8ba792] ml-2">Залишилось: {expedition.remaining}с</span>
               </div>
+              <span className="text-[#a3c2ab] font-mono font-bold shrink-0">{expedition.remaining}с</span>
             </div>
-            <div className="flex-1 max-w-xs mx-4 bg-[#0a110c] h-2 rounded-full overflow-hidden border border-[#223d29]">
-              <div
-                className="bg-emerald-500 h-full transition-all duration-300"
-                style={{ width: `${((expedition.totalDuration - expedition.remaining) / expedition.totalDuration) * 100}%` }}
-              />
+
+            <div className="flex items-center gap-2.5 flex-1 sm:max-w-xs">
+              <div className="flex-1 bg-[#0a110c] h-2 rounded-full overflow-hidden border border-[#223d29]">
+                <div
+                  className="bg-emerald-500 h-full transition-all duration-300"
+                  style={{ width: `${((expedition.totalDuration - expedition.remaining) / expedition.totalDuration) * 100}%` }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAfkModal(true)}
+                className="px-2.5 py-1 bg-[#1a3321] hover:bg-[#25462f] border border-[#3b6b46] rounded text-[11px] font-bold text-emerald-200 shrink-0"
+              >
+                Деталі
+              </button>
             </div>
-            <button
-              onClick={() => setShowAfkModal(true)}
-              className="px-2 py-1 bg-[#1a3321] hover:bg-[#25462f] border border-[#3b6b46] rounded text-[10px] text-emerald-200"
-            >
-              Диспетчер ходу
-            </button>
           </div>
         </div>
       )}
@@ -823,29 +827,29 @@ export default function App() {
       {/* ================= ЕКСТРЕНИЙ БАНЕР НЕПРИТОМНОСТІ ================= */}
       {isUnconscious && (
         <div className="max-w-7xl mx-auto w-full px-3 md:px-5 pt-3 z-30">
-          <div className="bg-[#260909]/95 border-2 border-red-600 rounded-lg p-3 md:p-4 shadow-[0_0_30px_rgba(220,38,38,0.4)] animate-pulse">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-3 text-center md:text-left">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-full bg-red-950 border border-red-600 shrink-0 shadow-lg">
-                  <Skull className="w-6 h-6 text-red-500 animate-bounce" />
+          <div className="bg-[#260909]/95 border-2 border-red-600 rounded-lg p-3.5 md:p-4 shadow-[0_0_25px_rgba(220,38,38,0.35)]">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-3.5 text-center md:text-left">
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <div className="p-2.5 rounded-full bg-red-950 border border-red-500 shrink-0 shadow-lg">
+                  <Skull className="w-6 h-6 text-red-400 animate-pulse" />
                 </div>
                 <div>
-                  <h3 className="text-xs md:text-sm font-bold text-red-200 uppercase tracking-wider font-mono">
+                  <h3 className="text-xs sm:text-sm font-bold text-red-200 uppercase tracking-wider font-mono">
                     КРИТИЧНИЙ СТАН // БЕЗ СВІДОМОСТІ (0 HP)
                   </h3>
-                  <p className="text-xs text-red-300/90 mt-0.5 leading-relaxed font-mono">
+                  <p className="text-xs text-red-200/90 mt-1 leading-relaxed font-mono">
                     Ви впали без свідомості, все що в вас лишається це гукати на допомогу або спробувати підлікуватись самостійно.
                   </p>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-center gap-2 shrink-0 w-full md:w-auto">
+              <div className="grid grid-cols-2 md:flex items-center gap-2 shrink-0 w-full md:w-auto">
                 <button
                   type="button"
                   onClick={() => setActiveTab('inventory')}
-                  className="flex-1 md:flex-initial px-3.5 py-2 bg-[#1b3821] hover:bg-[#285732] border border-emerald-500 text-emerald-100 text-xs font-bold rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
+                  className="px-3 py-2.5 bg-[#1b3821] hover:bg-[#285732] border border-emerald-500 text-emerald-100 text-xs font-bold leading-tight rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
                 >
-                  <Backpack className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <Backpack className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span>Інвентар (лікуватись)</span>
                 </button>
 
@@ -853,22 +857,22 @@ export default function App() {
                   type="button"
                   onClick={handleCallForHelp}
                   disabled={sosCooldown > 0}
-                  className={`flex-1 md:flex-initial px-3.5 py-2 border rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95 ${
+                  className={`px-3 py-2.5 border text-xs font-bold leading-tight rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95 ${
                     sosCooldown > 0
-                      ? 'bg-[#18130e] border-[#382618] text-[#7d5f47] cursor-not-allowed opacity-75'
+                      ? 'bg-[#18130e] border-[#453020] text-[#9c7a5e] cursor-not-allowed'
                       : 'bg-[#2c1d12] hover:bg-[#422917] border-amber-500 text-amber-200'
                   }`}
                 >
-                  <Radio className={`w-3.5 h-3.5 shrink-0 ${sosCooldown > 0 ? 'text-[#7d5f47]' : 'text-amber-400 animate-pulse'}`} />
-                  <span>{sosCooldown > 0 ? `Крик на кулдауні (${sosCooldown}с)` : 'Гукати допомогу (SOS)'}</span>
+                  <Radio className={`w-4 h-4 shrink-0 ${sosCooldown > 0 ? 'text-[#9c7a5e]' : 'text-amber-400 animate-pulse'}`} />
+                  <span>{sosCooldown > 0 ? `Кулдаун (${sosCooldown}с)` : 'Гукати допомогу (SOS)'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={handleSurrender}
-                  className="w-full md:w-auto px-3.5 py-2 bg-red-900/90 hover:bg-red-800 border border-red-500 text-white text-xs font-bold rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
+                  className="col-span-2 md:col-span-1 px-3.5 py-2.5 bg-red-900/90 hover:bg-red-800 border border-red-500 text-white text-xs font-bold leading-tight rounded flex items-center justify-center gap-1.5 transition shadow active:scale-95"
                 >
-                  <Skull className="w-3.5 h-3.5 text-red-300 shrink-0" />
+                  <Skull className="w-4 h-4 text-red-200 shrink-0" />
                   <span>Здатись (загинути)</span>
                 </button>
               </div>
