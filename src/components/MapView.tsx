@@ -73,6 +73,13 @@ const worldPixelToLatLng = (x: number, y: number, zoom: number) => {
 
 const FOG_OVERFLOW = 48;
 
+const formatTravelDuration = (totalSeconds: number): string => {
+  if (totalSeconds < 60) return `${totalSeconds} с`;
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins} хв ${secs} с`;
+};
+
 export const MapView: React.FC<MapViewProps> = ({
   coords,
   campCoords,
@@ -1007,7 +1014,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   Марш: {transitProgress.destData.name}
                 </span>
                 <span className="text-amber-300 font-mono font-bold shrink-0 ml-2">
-                  {transitProgress.remainingSec}с ({transitProgress.percent}%)
+                  {formatTravelDuration(transitProgress.remainingSec)} ({transitProgress.percent}%)
                 </span>
               </div>
               <div className="w-full bg-[#0a110c] h-2 rounded-full overflow-hidden border border-[#2b5936]">
@@ -1029,7 +1036,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   <span className="text-[10px] text-[#8ea894] font-mono shrink-0">({routeEstimates.meters}м)</span>
                 </div>
                 <div className="text-[10px] text-[#718d78] font-mono mt-0.5">
-                  Час: <b className="text-emerald-300">{routeEstimates.seconds}с</b> • Ситість:{' '}
+                  Час: <b className="text-emerald-300">{formatTravelDuration(routeEstimates.seconds)}</b> • Ситість:{' '}
                   <b className="text-amber-400">-{routeEstimates.hungerCost}%</b>
                 </div>
               </div>
