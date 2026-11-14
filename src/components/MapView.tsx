@@ -10,7 +10,7 @@ import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisti
 import { createSectorData } from '../utils/sectorGenerator';
 import type { SectorSearchRecord } from '../utils/sectorCooldownManager';
 import { getSectorSearchStatus, formatCooldownTimer } from '../utils/sectorCooldownManager';
-import { detectGridWater, SectorTerrainData } from '../utils/waterDetectorService';
+import { detectGridWater, getCachedSectorTerrain, SectorTerrainData } from '../utils/waterDetectorService';
 
 interface TargetSelection {
   lat: number;
@@ -283,33 +283,37 @@ export const MapView: React.FC<MapViewProps> = ({
     expeditionTargetCoords?.lng
   ]);
 
-  // Фонова класифікація рельєфу з постійним кешуванням
+  const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
+  // Фонова класифікація рельєфу для всіх некешованих видимих/розвіданих секторів
   useEffect(() => {
     let isMounted = true;
-    const missing = sectorList.filter(
-      (s) => calculateHaversineDistanceMeters(coords.lat, coords.lng, s.lat, s.lng) <= 300 && 
-             !terrainCacheRef.current[s.key] && 
-             !radarMap[s.key]
-    );
+    const missing = sectorList.filter((s) => {
+      if (terrainCacheRef.current[s.key] || radarMap[s.key]) return false;
+      const cached = getCachedSectorTerrain(s.lat, s.lng);
+      if (cached) {
+        terrainCacheRef.current[s.key] = cached;
+        return false;
+      }
+      const dist = calculateHaversineDistanceMeters(coords.lat, coords.lng, s.lat, s.lng);
+      return dist <= 350 || exploredSet.has(s.key);
+    });
 
     if (missing.length === 0) return;
 
     const timer = setTimeout(() => {
       detectGridWater(missing).then((results: Record<string, SectorTerrainData>) => {
-        if (isMounted && results) {
+        if (isMounted && results && Object.keys(results).length > 0) {
           terrainCacheRef.current = { ...terrainCacheRef.current, ...results };
           setRadarMap((prev) => ({ ...prev, ...results }));
         }
       }).catch(() => {});
-    }, 250);
+    }, 150);
 
     return () => {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [sectorList, radarMap, coords.lat, coords.lng]);
-
-  const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
+  }, [sectorList, radarMap, coords.lat, coords.lng, exploredSet]);
 
   // Формування секторів: без підміни на ліс і з повною стабільністю біомів
   const visibleSectors = useMemo(() => {
@@ -323,7 +327,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const isEverExplored = exploredSet.has(sec.key) || isCurrentPlayerPos || isCampSector;
       const isFog = !isLiveRadar && !isEverExplored;
 
-      const rawClass = terrainCacheRef.current[sec.key] || radarMap[sec.key];
+      const rawClass = terrainCacheRef.current[sec.key] || radarMap[sec.key] || getCachedSectorTerrain(sec.lat, sec.lng);
       const isActuallyDeepWater = Boolean(rawClass?.isWater && rawClass?.biome === 'water' && !rawClass?.isCoast);
       const isBlockedWater = isActuallyDeepWater && !isCurrentPlayerPos && !isCampSector && distFromPlayer > 200;
       
@@ -352,6 +356,7 @@ export const MapView: React.FC<MapViewProps> = ({
         ...sec,
         data: sectorData,
         isBlockedWater,
+        isScanning: !rawClass,
         searchState,
         isLiveRadar,
         isEverExplored,
@@ -861,6 +866,8 @@ export const MapView: React.FC<MapViewProps> = ({
                     <div className="relative z-10 flex items-center justify-center p-1.5 drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">
                       {isTargetOfMarch ? (
                         <Footprints className="w-5 h-5 text-amber-300 animate-bounce" />
+                      ) : sector.isScanning ? (
+                        <Radio className="w-4 h-4 text-emerald-500/50 animate-pulse" />
                       ) : (
                         <SectorTacticalIcon icon={sector.data.icon} className="w-5 h-5" />
                       )}

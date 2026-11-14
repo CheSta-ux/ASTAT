@@ -9,7 +9,32 @@ export interface SectorTerrainData {
 
 export type WaterClassification = SectorTerrainData;
 
+const TERRAIN_STORAGE_KEY = 'astat_terrain_cache_v2';
 const radarCache = new Map<string, SectorTerrainData>();
+
+// Відновлення кешу біомів із localStorage при старті (прибирає мерехтіння при перезавантаженні)
+try {
+  const saved = localStorage.getItem(TERRAIN_STORAGE_KEY);
+  if (saved) {
+    const parsed = JSON.parse(saved) as Record<string, SectorTerrainData>;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v && v.biome) {
+        radarCache.set(k, v);
+      }
+    }
+  }
+} catch {
+  // ігноруємо помилки сховища
+}
+
+const persistRadarCache = () => {
+  try {
+    const entries = Array.from(radarCache.entries()).slice(-2000);
+    localStorage.setItem(TERRAIN_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // ігноруємо квоту сховища
+  }
+};
 
 export function getCachedSectorTerrain(lat: number, lng: number): SectorTerrainData | undefined {
   const key = `${lat.toFixed(5)}-${lng.toFixed(5)}`;
@@ -52,29 +77,39 @@ const loadCorsTileImage = (x: number, y: number, z: number): Promise<HTMLImageEl
   });
 };
 
-// Аналіз підкладки: визначення води, лісу, полів та забудови
+// Динамічний аналіз тайлів під усі передані сектори (охоплює не лише 300м, а всю розвідану область)
 async function sampleTerrainMap(
-  centerLat: number,
-  centerLng: number,
   sectors: { lat: number; lng: number; key: string }[],
   zoom = 16
 ): Promise<Record<string, { waterVotes: number; forestVotes: number; fieldVotes: number; urbanVotes: number; total: number }>> {
   const results: Record<string, { waterVotes: number; forestVotes: number; fieldVotes: number; urbanVotes: number; total: number }> = {};
+  if (sectors.length === 0) return results;
 
-  const centerTileX = Math.floor(lon2tileFrac(centerLng, zoom));
-  const centerTileY = Math.floor(lat2tileFrac(centerLat, zoom));
-  const minTileX = centerTileX - 1;
-  const minTileY = centerTileY - 1;
+  const tileXs = sectors.map((s) => Math.floor(lon2tileFrac(s.lng, zoom)));
+  const tileYs = sectors.map((s) => Math.floor(lat2tileFrac(s.lat, zoom)));
+
+  const midIdx = Math.floor(sectors.length / 2);
+  const centerTileX = Math.floor(lon2tileFrac(sectors[midIdx].lng, zoom));
+  const centerTileY = Math.floor(lat2tileFrac(sectors[midIdx].lat, zoom));
+
+  // Обмежуємо максимальний розмір сітки 6x6 тайлів (~2.3 км), щоб не перевантажувати браузер
+  const minTileX = Math.max(centerTileX - 3, Math.min(...tileXs));
+  const maxTileX = Math.min(centerTileX + 3, Math.max(...tileXs));
+  const minTileY = Math.max(centerTileY - 3, Math.min(...tileYs));
+  const maxTileY = Math.min(centerTileY + 3, Math.max(...tileYs));
+
+  const tilesW = maxTileX - minTileX + 1;
+  const tilesH = maxTileY - minTileY + 1;
 
   const canvas = document.createElement('canvas');
-  canvas.width = 768;
-  canvas.height = 768;
+  canvas.width = tilesW * 256;
+  canvas.height = tilesH * 256;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return results;
 
   const loadTasks: Promise<{ img: HTMLImageElement | null; dx: number; dy: number }>[] = [];
-  for (let dy = 0; dy < 3; dy++) {
-    for (let dx = 0; dx < 3; dx++) {
+  for (let dy = 0; dy < tilesH; dy++) {
+    for (let dx = 0; dx < tilesW; dx++) {
       const tx = minTileX + dx;
       const ty = minTileY + dy;
       loadTasks.push(loadCorsTileImage(tx, ty, zoom).then((img) => ({ img, dx, dy })));
@@ -92,7 +127,6 @@ async function sampleTerrainMap(
 
   if (validTileCount === 0) return results;
 
-  // Вибірка 25 точок всередині кожного сектора 100х100м
   for (const s of sectors) {
     const tileFracX = lon2tileFrac(s.lng, zoom);
     const tileFracY = lat2tileFrac(s.lat, zoom);
@@ -100,19 +134,24 @@ async function sampleTerrainMap(
     const localX = (tileFracX - minTileX) * 256;
     const localY = (tileFracY - minTileY) * 256;
 
+    if (localX < 0 || localX >= canvas.width || localY < 0 || localY >= canvas.height) {
+      continue;
+    }
+
     let waterVotes = 0;
     let forestVotes = 0;
     let fieldVotes = 0;
     let urbanVotes = 0;
     let total = 0;
 
-    const radius = 10;
-    const step = 5;
+    // Вибірка 49 точок по всій площі сектора 100х100м
+    const radius = 12;
+    const step = 4;
 
     for (let oy = -radius; oy <= radius; oy += step) {
       for (let ox = -radius; ox <= radius; ox += step) {
-        const px = Math.min(767, Math.max(0, Math.round(localX + ox)));
-        const py = Math.min(767, Math.max(0, Math.round(localY + oy)));
+        const px = Math.min(canvas.width - 1, Math.max(0, Math.round(localX + ox)));
+        const py = Math.min(canvas.height - 1, Math.max(0, Math.round(localY + oy)));
 
         try {
           const p = ctx.getImageData(px, py, 1, 1).data;
@@ -123,19 +162,16 @@ async function sampleTerrainMap(
 
           if (a < 100) continue;
 
-          // 1. Водойми (синій тон OSM)
-          if (b >= 190 && (b - r) >= 18 && g >= 165) {
+          // 1. Водойми (синій тон)
+          if (b >= 180 && (b - r) >= 16 && g >= 155) {
             waterVotes++;
           }
-          // 2. Ліс / Хащі (яскраво виражений зелений рослинний покрив)
-          else if (g > r + 15 && g > b + 15 && g >= 130) {
+          // 2. Ліс / Хащі / Парки / Посадки (переважання зеленого каналу)
+          else if (g > r + 7 && g > b + 10 && g >= 120) {
             forestVotes++;
           }
-          // 3. Відкриті поля / луки / пустирі (світлі пасовища та відкриті ділянки)
-          else if (
-            (g >= r && g > b + 10 && r > 180 && g > 190) ||
-            (r > 215 && g > 215 && b > 175 && r >= b + 15)
-          ) {
+          // 3. Відкриті поля / луки / сільгоспугіддя
+          else if (g >= r - 3 && g > b + 7 && r >= 165 && g >= 175) {
             fieldVotes++;
           }
           // 4. Забудова / Будівлі / Асфальт / Промзона
@@ -189,32 +225,35 @@ export async function detectGridWater(
 
   if (needed.length === 0) return result;
 
-  const midIdx = Math.floor(sectors.length / 2);
-  const centerLat = sectors[midIdx]?.lat || sectors[0].lat;
-  const centerLng = sectors[midIdx]?.lng || sectors[0].lng;
+  // Розбиваємо на батчі по 60 точок для стабільної роботи Open-Meteo та тайлів
+  const batch = needed.slice(0, 60);
 
   const [elevations, sampledMap] = await Promise.all([
-    fetchElevations(needed),
-    sampleTerrainMap(centerLat, centerLng, needed)
+    fetchElevations(batch),
+    sampleTerrainMap(batch)
   ]);
 
-  // Перепад висот місцевості для виявлення гірського рельєфу
   const validElevs = elevations.filter((e): e is number => typeof e === 'number');
   const elevDiff = validElevs.length > 0 ? Math.max(...validElevs) - Math.min(...validElevs) : 0;
 
-  needed.forEach((sec, idx) => {
-    const elev = elevations[idx];
-    const votes = sampledMap[sec.key] || { waterVotes: 0, forestVotes: 0, fieldVotes: 0, urbanVotes: 0, total: 0 };
-    const total = votes.total || 1;
+  let cacheUpdated = false;
 
+  batch.forEach((sec, idx) => {
+    const elev = elevations[idx];
+    const votes = sampledMap[sec.key];
+    if (!votes || votes.total === 0) {
+      return;
+    }
+
+    const total = votes.total;
     const waterRatio = votes.waterVotes / total;
 
-    // Рівень 1: Вода (якщо висота невідома — покладаємося лише на тайли мапи, без хибного блокування суходолу)
+    // Рівень 1: Вода
     const isSeaLevelWater = typeof elev === 'number' && elev <= 0.5;
     const isWater = isSeaLevelWater || waterRatio >= 0.65;
     const isCoast = !isWater && (waterRatio >= 0.20 || (typeof elev === 'number' && elev > 0.5 && elev <= 3.5));
 
-    let biome: DetectedBiome = 'urban';
+    let biome: DetectedBiome = 'forest';
 
     if (isWater) {
       biome = 'water';
@@ -225,19 +264,26 @@ export async function detectGridWater(
     else if (elev !== null && (elev >= 600 || (elevDiff > 70 && elev > 300))) {
       biome = 'mountain';
     }
-    // Рівень 3: Порівняння лісу, поля та забудови за реальними пікселями
-    else if (votes.forestVotes >= votes.fieldVotes && votes.forestVotes >= votes.urbanVotes && votes.forestVotes > 2) {
+    // Рівень 3: Природний покрив проти забудови (дорога крізь ліс не перетворює ліс на завод)
+    else if (votes.forestVotes >= votes.fieldVotes && votes.forestVotes >= 3) {
       biome = 'forest';
-    } else if (votes.fieldVotes >= votes.forestVotes && votes.fieldVotes >= votes.urbanVotes && votes.fieldVotes > 2) {
+    } else if (votes.fieldVotes > votes.forestVotes && votes.fieldVotes >= 3) {
       biome = 'field';
-    } else {
+    } else if (votes.urbanVotes > votes.forestVotes + votes.fieldVotes) {
       biome = 'urban';
+    } else {
+      biome = 'forest';
     }
 
     const item: SectorTerrainData = { isWater, isCoast, biome, elevation: elev };
     radarCache.set(sec.key, item);
     result[sec.key] = item;
+    cacheUpdated = true;
   });
+
+  if (cacheUpdated) {
+    persistRadarCache();
+  }
 
   return result;
 }
