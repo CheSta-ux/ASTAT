@@ -3,15 +3,18 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Compass, Backpack, Radio, Crosshair, Footprints, AlertTriangle, Skull, Lock } from 'lucide-react';
 
 import type { Coordinates, ExpeditionState, InventoryItem, PlayerCondition, PlayerStats, RadioMessage, TabType } from './types/game';
+import { getSearchEventForBiome } from './constants/searchEvents';
+import type { SearchEventChoice } from './constants/searchEvents';
+import { SearchEventModal } from './components/SearchEventModal';
+import type { ActiveSearchEventState } from './components/SearchEventModal';
 import { calculateRealisticTravelTime, calculateHaversineDistanceMeters, offsetGeoBySectors } from './utils/coordinates';
 import { createSectorData } from './utils/sectorGenerator';
 import { detectGridWater, getCachedSectorTerrain } from './utils/waterDetectorService';
 import { useGameLoop } from './hooks/useGameLoop';
 import { 
   loadSectorSearchHistory, 
-  saveSectorSearchHistory, 
   getSectorSearchStatus, 
-  getSectorKey, 
+  recordSectorSearch,
   formatCooldownTimer,
   SectorSearchRecord 
 } from './utils/sectorCooldownManager';
@@ -105,6 +108,7 @@ export default function App() {
   const [campCoords, setCampCoords] = useState<Coordinates>(DEFAULT_COORDS);
   const [selectedTarget, setSelectedTarget] = useState<any>(null);
   const [expedition, setExpedition] = useState<ExpeditionState | null>(null);
+  const [activeSearchEvent, setActiveSearchEvent] = useState<ActiveSearchEventState | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>(INITIAL_AWAKENING_INVENTORY);
 
   const [radioMessages, setRadioMessages] = useState<RadioMessage[]>([
@@ -631,79 +635,136 @@ export default function App() {
 
   const handleSearch = async () => {
     if (isUnconscious) {
-      notify('Ви без свідомості! Обстеження неможливе.', 'danger');
+      notify('Ви без свідомості! Пошук ресурсів неможливий.', 'danger');
+      return;
+    }
+
+    if (expedition) {
+      notify('Неможливо обшукувати сектор під час руху!', 'warn');
       return;
     }
 
     const distToCamp = calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng);
     if (distToCamp < 50) {
-      notify('У межах Табору всі ресурси вже зібрані.', 'warn');
+      notify('Ви у безпечному таборі. Вийдіть у сусідні сектори для пошуку припасів.', 'info');
       return;
     }
 
-    const searchStatus = getSectorSearchStatus(coords.lat, coords.lng, sectorSearches);
-    if (searchStatus.isDepleted) {
-      notify(`Сектор виснажено! Доступно через: ${formatCooldownTimer(searchStatus.cooldownRemainingMs)}.`, 'warn');
+    const currentStatus = getSectorSearchStatus(coords.lat, coords.lng, sectorSearches);
+    if (currentStatus.isDepleted) {
+      notify(`Цей сектор повністю виснажено! Повторний огляд через ${formatCooldownTimer(currentStatus.cooldownRemainingMs)}`, 'warn');
       return;
     }
 
     if (player.hunger < 4) {
-      notify('Занадто слабкі від голоду для обстеження місцевості.', 'danger');
+      notify('Занадто низька ситість для обшуку (-4% потрібно).', 'danger');
       return;
     }
 
-    const nextSearchesLeft = searchStatus.searchesLeft - 1;
-    const sectorKey = getSectorKey(coords.lat, coords.lng);
+    // Одразу фіксуємо витрату ситості та спробу огляду сектора
+    const { updatedMap, newStatus } = recordSectorSearch(coords.lat, coords.lng, sectorSearches);
+    setSectorSearches(updatedMap);
 
-    const updatedHistory: Record<string, SectorSearchRecord> = {
-      ...sectorSearches,
-      [sectorKey]: {
-        searchesLeft: nextSearchesLeft,
-        lastSearchedAt: Date.now()
-      }
+    const updatedPlayer: PlayerStats = {
+      ...player,
+      hunger: Math.max(0, player.hunger - 4),
+      searchesLeft: newStatus.searchesLeft
     };
+    setPlayer(updatedPlayer);
+    syncGameState(updatedPlayer);
 
-    setSectorSearches(updatedHistory);
-    saveSectorSearchHistory(updatedHistory);
+    const sectorKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
+    const cached = getCachedSectorTerrain(coords.lat, coords.lng);
+    const terrain =
+      cached ||
+      (await detectGridWater([{ lat: coords.lat, lng: coords.lng, key: sectorKey }]))[sectorKey];
 
-    const nextHunger = Math.max(0, player.hunger - 4);
-    let nextPlayer = { ...player, searchesLeft: nextSearchesLeft, hunger: nextHunger };
-    let nextInventory = [...inventory];
+    const isDeepWater = Boolean(terrain?.isWater && terrain?.biome === 'water');
+    const currentSector = createSectorData(
+      coords.lat,
+      coords.lng,
+      isDeepWater,
+      Boolean(terrain?.isCoast),
+      false,
+      terrain?.biome
+    );
+    const sectorBiome = terrain?.biome || currentSector.icon || currentSector.id || 'forest';
+    const scenario = getSearchEventForBiome(sectorBiome, currentSector.name, player.specialization);
 
+    setActiveSearchEvent({
+      scenario,
+      sectorName: currentSector.name,
+      sectorBiome
+    });
+
+    if (newStatus.searchesLeft === 0) {
+      notify('Сектор зачищено! Блокування повторного огляду на 24 години.', 'warn');
+    }
+  };
+
+  const handleResolveSearchChoice = (choice: SearchEventChoice) => {
+    if (!activeSearchEvent || activeSearchEvent.resolved) return;
+
+    const { sectorName, sectorBiome } = activeSearchEvent;
     const roll = Math.random();
 
-    // 1. УСПІШНИЙ ПОШУК (55% шанс)
-    if (roll < 0.55) {
-      // Беремо реальний біом із кешу або визначаємо його по тайлах мапи
-      const cached = getCachedSectorTerrain(coords.lat, coords.lng);
-      const terrain =
-        cached ||
-        (await detectGridWater([{ lat: coords.lat, lng: coords.lng, key: sectorKey }]))[sectorKey];
+    let nextPlayer: PlayerStats = { ...player };
+    const nextInventory: InventoryItem[] = [...inventory];
+    const isZombified = nextPlayer.conditions.includes('zombified');
 
-      const isDeepWater = Boolean(terrain?.isWater && terrain?.biome === 'water');
-      const currentSector = createSectorData(
-        coords.lat,
-        coords.lng,
-        isDeepWater,
-        Boolean(terrain?.isCoast),
-        false,
-        terrain?.biome
-      );
-      const sectorBiome = terrain?.biome || currentSector.icon || currentSector.id || 'forest';
+    // 1. Перевірка спрацьовування пастки
+    if (choice.trapChance > 0 && roll < choice.trapChance) {
+      const dmg =
+        player.specialization === 'soldier'
+          ? Math.max(4, Math.round(choice.trapDamage * 0.67))
+          : choice.trapDamage;
+      const nextHp = Math.max(0, nextPlayer.hp - dmg);
+      nextPlayer.hp = nextHp;
 
-      // Отримуємо лут, логічно прив'язаний до поточної місцевості
-      const foundItem = getRandomLoot(sectorBiome, currentSector.name);
+      const hadBleeding = nextPlayer.conditions.includes('bleeding');
+      if (!hadBleeding) {
+        nextPlayer.conditions = [...nextPlayer.conditions, 'bleeding'];
+      }
+
+      if (nextHp <= 0 && !nextPlayer.conditions.includes('unconscious')) {
+        nextPlayer.conditions = [...nextPlayer.conditions, 'unconscious'];
+      }
+
+      setPlayer(nextPlayer);
+      syncGameState(nextPlayer, nextInventory);
+
+      setActiveSearchEvent({
+        ...activeSearchEvent,
+        resolved: {
+          outcome: 'trap',
+          narrative: choice.trapNarrative || 'Під час обшуку спрацювала прихована пастка!',
+          damageTaken: dmg,
+          gotBleeding: !hadBleeding
+        }
+      });
+
+      if (nextHp <= 0) {
+        notify('💀 Ви впали без свідомості від отриманих ран!', 'danger');
+        setActiveTab('inventory');
+      } else {
+        notify(`🩸 Пастка! Отримано ${dmg} шкоди та кровотечу!`, 'danger');
+      }
+      return;
+    }
+
+    // 2. Перевірка знаходження луту
+    const lootRoll = Math.random();
+    if (lootRoll < choice.lootChance) {
+      const foundItem = getRandomLoot(sectorBiome, sectorName);
+      let chipsFound = 0;
 
       if (foundItem.id === 'microchip') {
         const rawChips = foundItem.count || 1;
-        const isZombified = nextPlayer.conditions.includes('zombified');
-
         if (isZombified && Math.random() >= 0.2) {
           notify('💀 Знайдено пошкоджену мікросхему — через клеймо «Зомбований» (-80%) плата непридатна!', 'warn');
         } else {
-          const finalChips = isZombified ? Math.max(1, Math.floor(rawChips * 0.2)) : rawChips;
-          nextPlayer.astatCoins += finalChips;
-          notify(`📟 Знайдено кремнієву плату: +${finalChips} мікросхему!`, 'success');
+          chipsFound = isZombified ? Math.max(1, Math.floor(rawChips * 0.2)) : rawChips;
+          nextPlayer.astatCoins += chipsFound;
         }
       } else {
         const idx = nextInventory.findIndex((i) => i.id === foundItem.id);
@@ -712,50 +773,62 @@ export default function App() {
         } else {
           nextInventory.push({ ...foundItem, count: foundItem.count || 1 });
         }
-
-        // Тематична іконка для сповіщення
-        const itemIcon =
-          (foundItem as any).category === 'nature' ? '🌿' :
-          foundItem.type === 'food' ? '🍏' : 
-          foundItem.type.startsWith('medical') ? '🩹' : 
-          foundItem.type === 'junk' ? '🗑️' : 
-          foundItem.type === 'rare' ? '✨' : '⚙️';
-
-        const notifyType = foundItem.type === 'junk' ? 'info' : 'success';
-        notify(`${itemIcon} Знайдено: ${foundItem.name} (+${foundItem.count || 1})`, notifyType);
-      }
-    } else if (roll < 0.80) {
-      const trapDamage = player.specialization === 'soldier' ? 12 : 18;
-      const nextHp = Math.max(0, player.hp - trapDamage);
-      nextPlayer.hp = nextHp;
-
-      if (!nextPlayer.conditions.includes('bleeding')) {
-        nextPlayer.conditions = [...nextPlayer.conditions, 'bleeding'];
       }
 
-      if (nextHp <= 0) {
-        if (!nextPlayer.conditions.includes('unconscious')) {
-          nextPlayer.conditions = [...nextPlayer.conditions, 'unconscious'];
+      // Додатковий бонус мікросхем за складну або технічну дію
+      if (choice.bonusChipChance && Math.random() < choice.bonusChipChance) {
+        if (!isZombified || Math.random() < 0.2) {
+          chipsFound += 1;
+          nextPlayer.astatCoins += 1;
         }
-        notify(
-          '💀 Ви впали без свідомості, все що в вас лишається це гукати на допомогу або спробувати підлікуватись самостійно',
-          'danger'
-        );
-        setActiveTab('inventory');
-      } else {
-        notify('🩸 Пастка! Отримано 18 шкоди та кровотечу!', 'danger');
       }
-    } else {
-      notify('Ретельний огляд нічого не дав, лише іржа та порожнеча.', 'info');
+
+      let healedHp = 0;
+      if (choice.healBonus && choice.healBonus > 0) {
+        const before = nextPlayer.hp;
+        nextPlayer.hp = Math.min(nextPlayer.maxHp, nextPlayer.hp + choice.healBonus);
+        healedHp = nextPlayer.hp - before;
+      }
+
+      let gotRadiation = false;
+      if (choice.radChance && Math.random() < choice.radChance && !nextPlayer.conditions.includes('radiation')) {
+        nextPlayer.conditions = [...nextPlayer.conditions, 'radiation'];
+        gotRadiation = true;
+      }
+
+      setPlayer(nextPlayer);
+      setInventory(nextInventory);
+      syncGameState(nextPlayer, nextInventory);
+
+      setActiveSearchEvent({
+        ...activeSearchEvent,
+        resolved: {
+          outcome: 'loot',
+          narrative: choice.successNarrative,
+          foundItem: foundItem.id !== 'microchip' ? foundItem : undefined,
+          chipsFound: chipsFound > 0 ? chipsFound : undefined,
+          healedHp: healedHp > 0 ? healedHp : undefined,
+          gotRadiation
+        }
+      });
+
+      if (foundItem.id !== 'microchip') {
+        notify(`🎒 Знайдено: ${foundItem.name} (+${foundItem.count || 1})`, 'success');
+      } else if (chipsFound > 0) {
+        notify(`📟 Знайдено мікросхем: +${chipsFound} шт.!`, 'success');
+      }
+      return;
     }
 
-    setPlayer(nextPlayer);
-    setInventory(nextInventory);
-    syncGameState(nextPlayer, nextInventory);
-
-    if (nextSearchesLeft === 0) {
-      notify(`Сектор зачищено! Блокування повторного огляду на 24 години.`, 'warn');
-    }
+    // 3. Порожній результат
+    setActiveSearchEvent({
+      ...activeSearchEvent,
+      resolved: {
+        outcome: 'empty',
+        narrative: choice.emptyNarrative
+      }
+    });
+    notify('Обшук не дав результатів.', 'info');
   };
 
   const handleRest = () => {
@@ -1057,6 +1130,9 @@ export default function App() {
             exploredSectors={exploredSectors}
             notifications={notifications}
             onOpenAfkModal={() => setShowAfkModal(true)}
+            activeSearchEvent={activeSearchEvent}
+            onSelectSearchChoice={handleResolveSearchChoice}
+            onCloseSearchEvent={() => setActiveSearchEvent(null)}
           />
         )}
         {activeTab === 'inventory' && (
@@ -1129,6 +1205,15 @@ export default function App() {
       </nav>
 
       {showAfkModal && expedition && <AfkModal expedition={expedition} onClose={() => setShowAfkModal(false)} />}
+
+      {activeSearchEvent && (
+        <SearchEventModal
+          eventState={activeSearchEvent}
+          specialization={player.specialization}
+          onSelectChoice={handleResolveSearchChoice}
+          onClose={() => setActiveSearchEvent(null)}
+        />
+      )}
 
       {!hasCompletedOnboarding && (
         <OnboardingModal

@@ -11,6 +11,9 @@ import { createSectorData } from '../utils/sectorGenerator';
 import type { SectorSearchRecord } from '../utils/sectorCooldownManager';
 import { getSectorSearchStatus, formatCooldownTimer } from '../utils/sectorCooldownManager';
 import { detectGridWater, getCachedSectorTerrain, SectorTerrainData } from '../utils/waterDetectorService';
+import { SearchEventModal } from './SearchEventModal';
+import type { ActiveSearchEventState } from './SearchEventModal';
+import type { SearchEventChoice } from '../constants/searchEvents';
 
 interface TargetSelection {
   lat: number;
@@ -35,6 +38,9 @@ interface MapViewProps {
   exploredSectors: string[];
   notifications?: NotificationState[];
   onOpenAfkModal?: () => void;
+  activeSearchEvent?: ActiveSearchEventState | null;
+  onSelectSearchChoice?: (choice: SearchEventChoice) => void;
+  onCloseSearchEvent?: () => void;
 }
 
 const SectorTacticalIcon: React.FC<{ icon: string; className?: string }> = ({ icon, className = 'w-5 h-5' }) => {
@@ -94,7 +100,10 @@ export const MapView: React.FC<MapViewProps> = ({
   sectorSearches,
   exploredSectors = [],
   notifications = [],
-  onOpenAfkModal
+  onOpenAfkModal,
+  activeSearchEvent,
+  onSelectSearchChoice,
+  onCloseSearchEvent
 }) => {
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
@@ -787,6 +796,16 @@ export const MapView: React.FC<MapViewProps> = ({
               </div>
             ))}
           </div>
+        )}
+
+        {isFullscreen && activeSearchEvent && onSelectSearchChoice && onCloseSearchEvent && (
+          <SearchEventModal
+            eventState={activeSearchEvent}
+            specialization={player.specialization}
+            onSelectChoice={onSelectSearchChoice}
+            onClose={onCloseSearchEvent}
+            embedded
+          />
         )}
 
         {/* Контейнер карти */}

@@ -89,6 +89,52 @@ export const getSectorSearchStatus = (
   };
 };
 
+export const recordSectorSearch = (
+  lat: number,
+  lng: number,
+  history: Record<string, SectorSearchRecord>,
+  now = Date.now()
+): {
+  updatedMap: Record<string, SectorSearchRecord>;
+  newStatus: { searchesLeft: number; cooldownRemainingMs: number; isDepleted: boolean };
+} => {
+  let targetKey = getSectorKey(lat, lng);
+
+  if (!history[targetKey]) {
+    for (const key of Object.keys(history)) {
+      const [kLat, kLng] = key.split('-').map(Number);
+      if (!isNaN(kLat) && !isNaN(kLng) && getDistanceMeters(lat, lng, kLat, kLng) < 45) {
+        targetKey = key;
+        break;
+      }
+    }
+  }
+
+  const currentStatus = getSectorSearchStatus(lat, lng, history, now);
+  const nextSearchesLeft = Math.max(0, currentStatus.searchesLeft - 1);
+
+  const updatedMap: Record<string, SectorSearchRecord> = {
+    ...history,
+    [targetKey]: {
+      searchesLeft: nextSearchesLeft,
+      lastSearchedAt: now,
+      lat,
+      lng
+    }
+  };
+
+  saveSectorSearchHistory(updatedMap);
+
+  return {
+    updatedMap,
+    newStatus: {
+      searchesLeft: nextSearchesLeft,
+      cooldownRemainingMs: SECTOR_COOLDOWN_MS,
+      isDepleted: nextSearchesLeft <= 0
+    }
+  };
+};
+
 export const formatCooldownTimer = (ms: number): string => {
   if (ms <= 0) return '0с';
   const totalSec = Math.floor(ms / 1000);
