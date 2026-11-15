@@ -23,21 +23,24 @@ export function useGameLoop({
   const notifyRef = useRef(onNotify);
   notifyRef.current = onNotify;
 
-  // Захист від подвійного спрацьовування завершення маршу
   const isCompletedRef = useRef(false);
 
-  // 1. Таймер експедиції (щосекунди)
+  // 1. Таймер експедиції на основі реального системного часу (endsAt)
   useEffect(() => {
     if (!expedition) {
       isCompletedRef.current = false;
       return;
     }
 
-    const timer = setInterval(() => {
+    const syncExpeditionTimer = () => {
       setExpedition((prev) => {
         if (!prev) return null;
 
-        if (prev.remaining <= 1) {
+        const nextRemaining = prev.endsAt
+          ? Math.ceil((prev.endsAt - Date.now()) / 1000)
+          : prev.remaining - 1;
+
+        if (nextRemaining <= 0) {
           if (!isCompletedRef.current) {
             isCompletedRef.current = true;
             setTimeout(() => {
@@ -47,11 +50,31 @@ export function useGameLoop({
           return null;
         }
 
-        return { ...prev, remaining: prev.remaining - 1 };
-      });
-    }, 1000);
+        if (nextRemaining === prev.remaining) {
+          return prev;
+        }
 
-    return () => clearInterval(timer);
+        return { ...prev, remaining: nextRemaining };
+      });
+    };
+
+    const timer = setInterval(syncExpeditionTimer, 1000);
+
+    // Миттєвий перерахунок при поверненні у вкладку або розблокуванні смартфона
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        syncExpeditionTimer();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
   }, [Boolean(expedition), setExpedition]);
 
   // 2. Періодичний вплив кровотечі та голоду (раз на 15 секунд)

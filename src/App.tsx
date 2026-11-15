@@ -34,6 +34,31 @@ const DEFAULT_COORDS: Coordinates = {
   lng: 30.0631
 };
 
+const ACTIVE_EXPEDITION_KEY = 'astat_active_expedition_v1';
+
+const saveActiveExpedition = (exp: ExpeditionState | null) => {
+  try {
+    if (exp) {
+      localStorage.setItem(ACTIVE_EXPEDITION_KEY, JSON.stringify(exp));
+    } else {
+      localStorage.removeItem(ACTIVE_EXPEDITION_KEY);
+    }
+  } catch {
+    // ігноруємо помилки localStorage
+  }
+};
+
+const loadActiveExpedition = (): ExpeditionState | null => {
+  try {
+    const raw = localStorage.getItem(ACTIVE_EXPEDITION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ExpeditionState;
+    return parsed && typeof parsed.endsAt === 'number' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 interface GameToast {
   id: number;
   msg: string;
@@ -162,40 +187,111 @@ export default function App() {
       .select('*')
       .eq('id', localPlayerId)
       .maybeSingle()
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (!error && data) {
           const loadedSpec = data.specialization || 'scout';
           const computedMaxHp = loadedSpec === 'soldier' ? 120 : 100;
+
+          if (data.inventory && Array.isArray(data.inventory) && data.inventory.length > 0) {
+            setInventory(data.inventory);
+          }
+
+          const baseCoords: Coordinates =
+            data.lat && data.lng ? { x: 0, y: 0, lat: data.lat, lng: data.lng } : DEFAULT_COORDS;
+          const baseCamp: Coordinates =
+            data.camp_lat && data.camp_lng ? { x: 0, y: 0, lat: data.camp_lat, lng: data.camp_lng } : DEFAULT_COORDS;
+          let baseExplored: string[] =
+            Array.isArray(data.explored_sectors) && data.explored_sectors.length > 0
+              ? data.explored_sectors
+              : getSurroundingSectorKeys(baseCoords.lat, baseCoords.lng);
+
+          setCampCoords(baseCamp);
+
+          let finalCoords = baseCoords;
+          let finalHp = Math.min(computedMaxHp, data.hp ?? computedMaxHp);
+          let finalHunger = data.hunger ?? 100;
+          let finalConditions = data.conditions || ['comfort'];
+
+          const savedExp = loadActiveExpedition();
+          if (savedExp && savedExp.endsAt) {
+            const remainingSec = Math.ceil((savedExp.endsAt - Date.now()) / 1000);
+
+            if (remainingSec > 0) {
+              // Марш ще триває — відновлюємо таймер із точним залишком часу
+              setExpedition({ ...savedExp, remaining: remainingSec });
+            } else {
+              // Марш завершився, поки браузер був закритий — фіксуємо прибуття
+              saveActiveExpedition(null);
+              const destCoords: Coordinates = savedExp.targetCoords || {
+                x: savedExp.targetX,
+                y: savedExp.targetY,
+                lat: baseCoords.lat,
+                lng: baseCoords.lng
+              };
+              const distFromCamp = calculateHaversineDistanceMeters(
+                destCoords.lat,
+                destCoords.lng,
+                baseCamp.lat,
+                baseCamp.lng
+              );
+              const isAtCamp = distFromCamp < 50;
+              const destSector =
+                savedExp.targetSectorData ||
+                createSectorData(destCoords.lat, destCoords.lng, false, false, isAtCamp);
+
+              const newlyRevealed = getSurroundingSectorKeys(destCoords.lat, destCoords.lng);
+              baseExplored = Array.from(new Set([...baseExplored, ...newlyRevealed]));
+              finalCoords = destCoords;
+
+              finalHunger = Math.max(0, finalHunger - savedExp.hungerCost);
+              if ((data.hunger ?? 100) < savedExp.hungerCost) {
+                finalHp = Math.max(5, finalHp - (savedExp.hungerCost - (data.hunger ?? 100)) * 2);
+              }
+              if (distFromCamp >= 50) {
+                finalConditions = finalConditions.filter((c: string) => c !== 'comfort');
+              }
+              if (destSector.radHazard > 0.3 && Math.random() < destSector.radHazard && !finalConditions.includes('radiation')) {
+                finalConditions = [...finalConditions, 'radiation'];
+              }
+
+              setExpedition(null);
+              notify(`🏁 Марш завершено під час вашої відсутності! Прибуття: ${destSector.name}`, 'success');
+
+              // Одразу фіксуємо прибуття в Supabase
+              supabase
+                .from('players')
+                .update({
+                  lat: finalCoords.lat,
+                  lng: finalCoords.lng,
+                  hp: finalHp,
+                  hunger: finalHunger,
+                  conditions: finalConditions,
+                  explored_sectors: baseExplored,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', localPlayerId)
+                .then(() => {});
+            }
+          }
+
+          setCoords(finalCoords);
+          setExploredSectors(baseExplored);
           setPlayer((prev) => ({
             ...prev,
             name: data.callsign || 'Виживший',
             callsign: data.callsign || 'Виживший',
             citizenship: data.citizenship || 'Україна 🇺🇦',
             specialization: loadedSpec,
-            hp: Math.min(computedMaxHp, data.hp ?? computedMaxHp),
+            hp: finalHp,
             maxHp: computedMaxHp,
-            hunger: data.hunger ?? 100,
+            hunger: finalHunger,
             maxHunger: 100,
             astatCoins: data.microchips ?? 0,
             searchesLeft: 4,
-            conditions: data.conditions || ['comfort'],
-            exploredCount: data.explored_sectors?.length || 0
+            conditions: finalConditions,
+            exploredCount: baseExplored.length
           }));
 
-          if (data.lat && data.lng) {
-            setCoords({ x: 0, y: 0, lat: data.lat, lng: data.lng });
-          }
-          if (data.camp_lat && data.camp_lng) {
-            setCampCoords({ x: 0, y: 0, lat: data.camp_lat, lng: data.camp_lng });
-          }
-          if (data.inventory && Array.isArray(data.inventory) && data.inventory.length > 0) {
-            setInventory(data.inventory);
-          }
-          if (data.explored_sectors && Array.isArray(data.explored_sectors)) {
-            setExploredSectors(data.explored_sectors);
-          } else if (data.lat && data.lng) {
-            setExploredSectors(getSurroundingSectorKeys(data.lat, data.lng));
-          }
           setHasCompletedOnboarding(true);
         }
       });
@@ -376,6 +472,7 @@ export default function App() {
     setCoords(respawnCoords);
     setSelectedTarget(null);
     setExpedition(null);
+    saveActiveExpedition(null);
     setInventory([]); // Речі залишаються на секторі
 
     const respawnMaxHp = player.specialization === 'soldier' ? 120 : 100;
@@ -430,6 +527,7 @@ export default function App() {
     setCoords(destCoords);
     setSelectedTarget(null);
     setExpedition(null);
+    saveActiveExpedition(null);
 
     const newRevealed = getSurroundingSectorKeys(destCoords.lat, destCoords.lng);
     const nextExplored = Array.from(new Set([...exploredSectors, ...newRevealed]));
@@ -508,18 +606,27 @@ export default function App() {
       return;
     }
 
-    setExpedition({
+    const endsAt = Date.now() + estimates.seconds * 1000;
+    const nextExpedition: ExpeditionState = {
       targetX: Math.round(targetCoordObj.lng * 1000),
       targetY: Math.round(targetCoordObj.lat * 1000),
       targetCoords: targetCoordObj,
       targetSectorData: (targetCoordObj as any).targetSectorData,
       totalDuration: estimates.seconds,
       remaining: estimates.seconds,
+      endsAt,
       hungerCost: estimates.hungerCost,
       isMinimized: false
-    } as any);
+    };
 
-    notify(`Марш розпочато: ${estimates.meters}м. Час: ${estimates.seconds}с`, 'info');
+    setExpedition(nextExpedition);
+    saveActiveExpedition(nextExpedition);
+
+    const timeLabel =
+      estimates.seconds >= 60
+        ? `${Math.floor(estimates.seconds / 60)} хв ${estimates.seconds % 60} с`
+        : `${estimates.seconds} с`;
+    notify(`Марш розпочато: ${estimates.meters}м. Час: ${timeLabel}`, 'info');
   };
 
   const handleSearch = async () => {

@@ -57,8 +57,10 @@ export interface ExpeditionState {
   targetX: number;
   targetY: number;
   targetCoords?: Coordinates;
+  targetSectorData?: SectorDefinition;
   totalDuration: number;
   remaining: number;
+  endsAt?: number; // Точний час завершення маршу в мс (Date.now())
   hungerCost: number;
   isMinimized: boolean;
 }
