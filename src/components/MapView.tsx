@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  MapPin, Eye, Bed, Tent, Footprints, AlertCircle, AlertTriangle, Waves, 
+  MapPin, Eye, Bed, Tent, Footprints, AlertCircle, Waves, 
   Building2, Factory, Route, Anchor, 
   Compass, Ship, Zap, Mountain, Crosshair, Wheat, TreePine, 
-  Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed, Maximize2, Minimize2
+  Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed
 } from 'lucide-react';
 import type { Coordinates, ExpeditionState, NotificationState, PlayerStats, SectorDefinition } from '../types/game';
 import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisticTravelTime } from '../utils/coordinates';
@@ -11,7 +11,6 @@ import { createSectorData } from '../utils/sectorGenerator';
 import type { SectorSearchRecord } from '../utils/sectorCooldownManager';
 import { getSectorSearchStatus, formatCooldownTimer } from '../utils/sectorCooldownManager';
 import { detectGridWater, getCachedSectorTerrain, SectorTerrainData } from '../utils/waterDetectorService';
-import { SearchEventModal } from './SearchEventModal';
 import type { ActiveSearchEventState } from './SearchEventModal';
 import type { SearchEventChoice } from '../constants/searchEvents';
 
@@ -99,59 +98,79 @@ export const MapView: React.FC<MapViewProps> = ({
   onRelocateCamp,
   sectorSearches,
   exploredSectors = [],
-  notifications = [],
-  onOpenAfkModal,
-  activeSearchEvent,
-  onSelectSearchChoice,
-  onCloseSearchEvent
+  onOpenAfkModal
 }) => {
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
   const terrainCacheRef = useRef<Record<string, SectorTerrainData>>({});
   const [panPx, setPanPx] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const panPxRef = useRef(panPx);
+  panPxRef.current = panPx;
 
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const mapWrapperRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  const toggleFullscreen = () => {
-    const nextState = !isFullscreen;
-    setIsFullscreen(nextState);
-
-    try {
-      if (nextState && mapWrapperRef.current && !document.fullscreenElement) {
-        mapWrapperRef.current.requestFullscreen?.().catch(() => {});
-      } else if (!nextState && document.fullscreenElement) {
-        document.exitFullscreen?.().catch(() => {});
-      }
-    } catch {
-      // iOS Safari використовує CSS-повноекранний режим fixed inset-0
-    }
-  };
-
-  useEffect(() => {
-    const handleFsChange = () => {
-      if (!document.fullscreenElement && isFullscreen) {
-        // Синхронізуємо вихід за системною кнопкою «Назад» або Esc
-        setIsFullscreen(false);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isFullscreen) {
-        setIsFullscreen(false);
-      }
-    };
-
-    document.addEventListener('fullscreenchange', handleFsChange);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFsChange);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isFullscreen]);
-
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const prevCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const cancelArrivalAnimRef = useRef<(() => void) | null>(null);
+  const [arrivalPulse, setArrivalPulse] = useState(false);
+
+  // Плавне наведення камери та імпульс прибуття до нової відкритої локації
+  useEffect(() => {
+    const prev = prevCoordsRef.current;
+    prevCoordsRef.current = { lat: coords.lat, lng: coords.lng };
+    if (!prev) return;
+
+    const movedMeters = calculateHaversineDistanceMeters(prev.lat, prev.lng, coords.lat, coords.lng);
+    if (movedMeters < 20) return;
+
+    // Якщо дистанція > 5 км (початкове завантаження профілю або телепорт на базу) — центруємо миттєво
+    if (movedMeters > 5000) {
+      setPanPx({ x: 0, y: 0 });
+      return;
+    }
+
+    const prevWorld = latLngToWorldPixel(prev.lat, prev.lng, zoom);
+    const nextWorld = latLngToWorldPixel(coords.lat, coords.lng, zoom);
+    const curPan = panPxRef.current;
+
+    const startPanX = curPan.x + (nextWorld.x - prevWorld.x);
+    const startPanY = curPan.y + (nextWorld.y - prevWorld.y);
+
+    setPanPx({ x: Math.round(startPanX), y: Math.round(startPanY) });
+    setArrivalPulse(true);
+
+    const durationMs = 480;
+    const startTime = performance.now();
+    let rafId = 0;
+    let cancelled = false;
+
+    const animateCamera = (now: number) => {
+      if (cancelled) return;
+      const t = Math.min(1, (now - startTime) / durationMs);
+      const easeOut = 1 - Math.pow(1 - t, 3);
+      setPanPx({
+        x: Math.round(startPanX * (1 - easeOut)),
+        y: Math.round(startPanY * (1 - easeOut))
+      });
+      if (t < 1) {
+        rafId = requestAnimationFrame(animateCamera);
+      }
+    };
+
+    rafId = requestAnimationFrame(animateCamera);
+    const pulseTimer = setTimeout(() => setArrivalPulse(false), 1400);
+
+    const cancel = () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
+    cancelArrivalAnimRef.current = cancel;
+
+    return () => {
+      cancel();
+      clearTimeout(pulseTimer);
+    };
+  }, [coords.lat, coords.lng]);
 
   const [containerSize, setContainerSize] = useState({ width: 700, height: 600 });
   const isDraggingRef = useRef(false);
@@ -274,11 +293,10 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [expedition]);
 
-  // ГЛОБАЛЬНА СІТКА СЕКТОРІВ: ОБРАНИЙ СЕКТОР (НАВІТЬ У ТУМАНІ) ТЕПЕР ЗАКРІПЛЕНИЙ ТУТ
+  // Глобальна сітка секторів
   const sectorList = useMemo(() => {
     const map = new Map<string, { lat: number; lng: number; key: string }>();
 
-    // 1. Поточний в'юпорт камери
     const radX = 7;
     const radY = 6;
     for (let dy = cameraGridCenter.gy + radY; dy >= cameraGridCenter.gy - radY; dy--) {
@@ -291,7 +309,6 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
 
-    // 2. Усі збережені відвідані сектори
     exploredSectors.forEach((key) => {
       if (map.has(key)) return;
       const parts = key.split('-');
@@ -304,7 +321,6 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
-    // 3. Обраний сектор (якщо в тумані за межами екрана — намертво прив'язується до сітки)
     if (selectedTarget) {
       const stKey = `${selectedTarget.lat.toFixed(5)}-${selectedTarget.lng.toFixed(5)}`;
       if (!map.has(stKey)) {
@@ -312,7 +328,6 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
 
-    // 4. Ціль маршу
     if (expeditionTargetCoords) {
       const expKey = `${expeditionTargetCoords.lat.toFixed(5)}-${expeditionTargetCoords.lng.toFixed(5)}`;
       if (!map.has(expKey)) {
@@ -320,7 +335,6 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     }
 
-    // 5. Гравець і База
     const pKey = `${coords.lat.toFixed(5)}-${coords.lng.toFixed(5)}`;
     if (!map.has(pKey)) map.set(pKey, { lat: Number(coords.lat.toFixed(5)), lng: Number(coords.lng.toFixed(5)), key: pKey });
     const cKey = `${campCoords.lat.toFixed(5)}-${campCoords.lng.toFixed(5)}`;
@@ -342,7 +356,8 @@ export const MapView: React.FC<MapViewProps> = ({
   ]);
 
   const exploredSet = useMemo(() => new Set(exploredSectors), [exploredSectors]);
-  // Фонова класифікація рельєфу для всіх некешованих видимих/розвіданих секторів
+
+  // Фонова класифікація рельєфу для видимих та розвіданих секторів
   useEffect(() => {
     let isMounted = true;
     const missing = sectorList.filter((s) => {
@@ -373,7 +388,6 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, [sectorList, radarMap, coords.lat, coords.lng, exploredSet]);
 
-  // Формування секторів: без підміни на ліс і з повною стабільністю біомів
   const visibleSectors = useMemo(() => {
     return sectorList.map((sec) => {
       const distFromPlayer = calculateHaversineDistanceMeters(coords.lat, coords.lng, sec.lat, sec.lng);
@@ -400,7 +414,6 @@ export const MapView: React.FC<MapViewProps> = ({
       const screenX = secWorld.x - cameraWorld.x + containerSize.width / 2;
       const screenY = secWorld.y - cameraWorld.y + containerSize.height / 2;
 
-      // Не передаємо насильний 'forest' — генератор стабільно тримає свій справжній біом
       const sectorData = createSectorData(
         sec.lat, 
         sec.lng, 
@@ -447,7 +460,6 @@ export const MapView: React.FC<MapViewProps> = ({
 
     ctx.globalCompositeOperation = 'destination-out';
 
-    // Розкриття всіх розвіданих секторів
     exploredSectors.forEach((key) => {
       const parts = key.split('-');
       if (parts.length >= 2) {
@@ -471,7 +483,6 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
-    // Табір
     const campSx = campScreen.x + FOG_OVERFLOW;
     const campSy = campScreen.y + FOG_OVERFLOW;
     const campGrad = ctx.createRadialGradient(campSx, campSy, 15, campSx, campSy, 100);
@@ -482,7 +493,6 @@ export const MapView: React.FC<MapViewProps> = ({
     ctx.arc(campSx, campSy, 100, 0, Math.PI * 2);
     ctx.fill();
 
-    // Зона огляду
     const pSx = playerScreen.x + FOG_OVERFLOW;
     const pSy = playerScreen.y + FOG_OVERFLOW;
     const liveGrad = ctx.createRadialGradient(pSx, pSy, 45, pSx, pSy, 165);
@@ -576,6 +586,7 @@ export const MapView: React.FC<MapViewProps> = ({
   // Драг карти
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    cancelArrivalAnimRef.current?.();
     isDraggingRef.current = true;
     hasMovedRef.current = false;
     startPosRef.current = { x: e.clientX, y: e.clientY };
@@ -620,7 +631,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   };
 
-  // Клік на мапу: пошук сектора на стаціонарній сітці
+  // Клік на мапу
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (hasMovedRef.current || expedition) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -649,7 +660,6 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    // Пошук найближчої комірки серед усіх згенерованих секторів на екрані
     const nearest = visibleSectors.find(
       (s) => Math.hypot(s.screenX - clickScreenX, s.screenY - clickScreenY) < 48
     );
@@ -665,7 +675,6 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    // Якщо клік за межами в'юпорта: точний розрахунок дискретного кроку від бази
     const clickWorldX = cameraWorld.x - containerSize.width / 2 + clickScreenX;
     const clickWorldY = cameraWorld.y - containerSize.height / 2 + clickScreenY;
     const clickGeo = worldPixelToLatLng(clickWorldX, clickWorldY, zoom);
@@ -704,15 +713,8 @@ export const MapView: React.FC<MapViewProps> = ({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
-      <div
-        ref={mapWrapperRef}
-        className={
-          isFullscreen
-            ? 'fixed inset-0 z-50 h-[100dvh] w-screen bg-[#030604] p-2.5 sm:p-4 flex flex-col justify-between select-none'
-            : 'lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-2.5 sm:p-4 flex flex-col justify-between shadow-2xl relative h-[76dvh] min-h-[480px] sm:h-[600px] lg:h-auto lg:min-h-[660px]'
-        }
-      >
-        {/* Верхня панель: компактний рядок на мобільних + кнопка повного екрана */}
+      <div className="lg:col-span-2 bg-[#060a08] border border-[#233327] rounded-lg p-2.5 sm:p-4 flex flex-col justify-between shadow-2xl relative h-[74dvh] min-h-[460px] sm:h-[600px] lg:h-auto lg:min-h-[660px]">
+        {/* Верхня панель */}
         <div className="flex items-center justify-between gap-1.5 mb-2 text-xs z-30">
           <div className="flex items-center gap-1.5 text-emerald-300 font-bold bg-[#08100b]/90 px-2 py-1 rounded border border-[#203a27] backdrop-blur-md shadow-md text-[10px] sm:text-xs min-w-0 truncate">
             <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> 
@@ -753,60 +755,8 @@ export const MapView: React.FC<MapViewProps> = ({
               <span className="hidden sm:inline">База: {campCoords.lat.toFixed(4)}°</span>
               <span>({distanceToCampMeters}м)</span>
             </button>
-
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              title={isFullscreen ? 'Згорнути карту' : 'Розгорнути карту на весь екран'}
-              className="flex items-center gap-1 bg-[#14291b] hover:bg-[#1f3d29] border border-emerald-500/70 text-emerald-200 px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition active:scale-95 shadow-md cursor-pointer"
-            >
-              {isFullscreen ? (
-                <>
-                  <Minimize2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span className="hidden sm:inline">Згорнути</span>
-                </>
-              ) : (
-                <>
-                  <Maximize2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span className="hidden sm:inline">На весь екран</span>
-                </>
-              )}
-            </button>
           </div>
         </div>
-
-        {/* Push-сповіщення всередині повноекранного шару (#top-layer) */}
-        {isFullscreen && notifications.length > 0 && (
-          <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-1.5 pointer-events-none max-w-[92vw] w-max">
-            {notifications.map((n) => (
-              <div
-                key={n.id}
-                className={`px-3.5 py-2 rounded border shadow-2xl flex items-center gap-2 text-xs transition-all duration-300 animate-in fade-in slide-in-from-top-2 ${
-                  n.type === 'danger'
-                    ? 'bg-[#260f0f]/95 border-red-500 text-red-200'
-                    : n.type === 'warn'
-                    ? 'bg-[#291e0a]/95 border-amber-500 text-amber-200'
-                    : n.type === 'success'
-                    ? 'bg-[#0f2918]/95 border-emerald-500 text-emerald-200'
-                    : 'bg-[#141b16]/95 border-[#3b5e43] text-[#cfdcce]'
-                }`}
-              >
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                <span className="font-semibold">{n.msg}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {isFullscreen && activeSearchEvent && onSelectSearchChoice && onCloseSearchEvent && (
-          <SearchEventModal
-            eventState={activeSearchEvent}
-            specialization={player.specialization}
-            onSelectChoice={onSelectSearchChoice}
-            onClose={onCloseSearchEvent}
-            embedded
-          />
-        )}
 
         {/* Контейнер карти */}
         <div 
@@ -850,7 +800,7 @@ export const MapView: React.FC<MapViewProps> = ({
             className="pointer-events-none z-10 opacity-95"
           />
 
-          {/* 3. ШАР ТАКТИЧНИХ МАРКЕРІВ (ЛИШЕ САМІ ОБ'ЄКТИ СІТКИ ТА ЇХНЄ ПІДСВІЧУВАННЯ) */}
+          {/* 3. Шар тактичних маркерів */}
           <div className="absolute inset-0 pointer-events-none z-20">
             
             {/* А) МАРКЕР ВИЖИВАНЦЯ */}
@@ -865,8 +815,15 @@ export const MapView: React.FC<MapViewProps> = ({
               className="pointer-events-none flex flex-col items-center justify-center"
             >
               <div className="relative flex items-center justify-center">
+                {arrivalPulse && (
+                  <div className="absolute w-16 h-16 rounded-full border-2 border-emerald-300 bg-emerald-400/25 animate-ping" />
+                )}
                 <div className="absolute w-12 h-12 rounded-full border border-emerald-400 bg-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.7)] animate-pulse" />
-                <div className="relative z-10 p-2 rounded-full bg-[#08150d] border border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.9)]">
+                <div
+                  className={`relative z-10 p-2 rounded-full bg-[#08150d] border border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.9)] transition-transform duration-300 ${
+                    arrivalPulse ? 'scale-110' : 'scale-100'
+                  }`}
+                >
                   {isAtCamp ? (
                     <Tent className="w-5 h-5 text-emerald-300" />
                   ) : (
@@ -879,7 +836,7 @@ export const MapView: React.FC<MapViewProps> = ({
               </span>
             </div>
 
-            {/* Б) МАРКЕР БАЗОВОГО ТАБОРУ (КОЛИ ГРАВЕЦЬ НЕ В ТАБОРІ) */}
+            {/* Б) МАРКЕР БАЗОВОГО ТАБОРУ */}
             {!isAtCamp && (
               <div
                 style={{
@@ -903,7 +860,7 @@ export const MapView: React.FC<MapViewProps> = ({
               </div>
             )}
 
-            {/* В) СЕКТОРИ СВІТУ (БЕЗ ДУБЛЮВАННЯ ТА БЕЗ ПЛАВАЮЧИХ ОВЕРЛЕЇВ) */}
+            {/* В) СЕКТОРИ СВІТУ */}
             {visibleSectors.map((sector) => {
               if (sector.isCurrent || (sector.isCampSector && !isAtCamp)) return null;
 
@@ -916,8 +873,6 @@ export const MapView: React.FC<MapViewProps> = ({
                 calculateHaversineDistanceMeters(sector.lat, sector.lng, selectedTarget.lat, selectedTarget.lng) < 25
               );
 
-              // 1. СЕКТОР У ТУМАНІ ВІЙНИ:
-              // Рендериться ТІЛЬКИ коли його обрано або сюди прямує марш. Інакше повністю прихований (null).
               if (sector.isFog) {
                 if (!isSelected && !sector.isExpeditionDestination) return null;
                 return (
@@ -954,7 +909,6 @@ export const MapView: React.FC<MapViewProps> = ({
                 );
               }
 
-              // 2. ВІДОМА / РОЗВІДАНА ЛОКАЦІЯ
               const isDepleted = sector.searchState.isDepleted;
               const searchesLeft = sector.searchState.searchesLeft;
               const isPartiallySearched = searchesLeft < 4 && !isDepleted;
@@ -975,7 +929,6 @@ export const MapView: React.FC<MapViewProps> = ({
                   }`}
                 >
                   <div className="relative flex items-center justify-center">
-                    {/* Підсвічування обраної відкритої локації прямо навколо її іконки */}
                     {isSelected && (
                       <div className="absolute w-10 h-10 rounded-full border-2 border-yellow-400 bg-yellow-400/15 shadow-[0_0_15px_rgba(250,204,21,0.7)] animate-pulse" />
                     )}
@@ -1024,27 +977,8 @@ export const MapView: React.FC<MapViewProps> = ({
           </div>
         </div>
 
-        {/* Мобільний та повноекранний віджет швидкої дії */}
-        <div className={`${isFullscreen ? 'block' : 'lg:hidden'} mt-2 z-30`}>
-          {expedition && transitProgress && isFullscreen && (
-            <div className="p-2.5 bg-[#121c15]/95 border border-amber-500/80 rounded-lg shadow-2xl space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-amber-300 font-bold truncate">
-                  Марш: {transitProgress.destData.name}
-                </span>
-                <span className="text-amber-300 font-mono font-bold shrink-0 ml-2">
-                  {formatTravelDuration(transitProgress.remainingSec)} ({transitProgress.percent}%)
-                </span>
-              </div>
-              <div className="w-full bg-[#0a110c] h-2 rounded-full overflow-hidden border border-[#2b5936]">
-                <div
-                  className="bg-amber-500 h-full transition-all duration-300"
-                  style={{ width: `${transitProgress.percent}%` }}
-                />
-              </div>
-            </div>
-          )}
-
+        {/* Мобільний віджет швидкої дії */}
+        <div className="lg:hidden mt-2 z-30">
           {!expedition && selectedTarget && !isSelectedCurrent && routeEstimates && (
             <div className="p-2.5 bg-[#121c15] border border-amber-500/80 rounded-lg shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-bottom-2">
               <div className="min-w-0 flex-1">
@@ -1158,9 +1092,7 @@ export const MapView: React.FC<MapViewProps> = ({
                     Залишилось часу:
                   </span>
                   <b className="text-amber-300 font-mono text-sm tracking-wider">
-                    {transitProgress.remainingSec >= 60
-                      ? `${Math.floor(transitProgress.remainingSec / 60)} хв ${transitProgress.remainingSec % 60} с`
-                      : `${transitProgress.remainingSec} с`}
+                    {formatTravelDuration(transitProgress.remainingSec)}
                   </b>
                 </div>
 
@@ -1319,9 +1251,7 @@ export const MapView: React.FC<MapViewProps> = ({
                 <div>
                   Час маршу: ~
                   <b className="text-emerald-400 font-mono">
-                    {routeEstimates.seconds >= 60
-                      ? `${Math.floor(routeEstimates.seconds / 60)} хв ${routeEstimates.seconds % 60} с`
-                      : `${routeEstimates.seconds} с`}
+                    {formatTravelDuration(routeEstimates.seconds)}
                   </b>
                 </div>
               </div>

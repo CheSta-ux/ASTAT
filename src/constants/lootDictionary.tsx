@@ -202,18 +202,24 @@ const getBiomeMultiplier = (itemId: string, category: string | undefined, biome:
 };
 
 // Контекстний пошук предметів відповідно до місцевості
-export const getRandomLoot = (sectorBiome: string = 'forest', sectorName: string = ''): InventoryItem => {
+export const getRandomLoot = (
+  sectorBiome: string = 'forest',
+  sectorName: string = '',
+  preferredIds?: string[]
+): InventoryItem => {
   const pool = dynamicLootPool.length > 0 ? dynamicLootPool : EMERGENCY_FALLBACK_LOOT;
   const context = `${sectorBiome} ${sectorName}`.toLowerCase();
 
-  // Обчислення ефективної ваги кожного предмета в цьому біомі
-  const weightedPool = pool.map((item) => {
-    const mult = getBiomeMultiplier(item.id, item.category, context);
-    return {
-      item,
-      effectiveWeight: Math.max(0, item.dropWeight * mult)
-    };
-  }).filter((entry) => entry.effectiveWeight > 0);
+  const weightedPool = pool
+    .map((item) => {
+      const mult = getBiomeMultiplier(item.id, item.category, context);
+      const preferenceBoost = preferredIds?.includes(item.id) ? 3.0 : 1.0;
+      return {
+        item,
+        effectiveWeight: Math.max(0, item.dropWeight * mult * preferenceBoost)
+      };
+    })
+  .filter((entry) => entry.effectiveWeight > 0);
 
   const activePool = weightedPool.length > 0 ? weightedPool : pool.map((i) => ({ item: i, effectiveWeight: 1 }));
   const totalWeight = activePool.reduce((sum, entry) => sum + entry.effectiveWeight, 0);

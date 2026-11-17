@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Heart, Flame, Shield, Sparkles, Coins, Copy, Check, 
-  Activity, AlertTriangle, Bed, Utensils, Crosshair, X 
+  Activity, AlertTriangle, Bed, Utensils, Crosshair, X,
+  Maximize2, Minimize2
 } from 'lucide-react';
 import type { PlayerStats } from '../types/game';
 import { TOKEN_CONFIG } from '../constants/token';
@@ -14,11 +15,56 @@ interface HeaderHUDProps {
 export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }) => {
   const [activePopup, setActivePopup] = useState<'token' | 'hp' | 'hunger' | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isAppFullscreen, setIsAppFullscreen] = useState(false);
 
   const isComfort = player.conditions.includes('comfort');
   const isBleeding = player.conditions.includes('bleeding');
   const isRadiation = player.conditions.includes('radiation');
   const isZombified = player.conditions.includes('zombified');
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      const doc = document as Document & { webkitFullscreenElement?: Element | null };
+      setIsAppFullscreen(Boolean(doc.fullscreenElement || doc.webkitFullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenState);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState);
+      document.removeEventListener('webkitfullscreenchange', syncFullscreenState);
+    };
+  }, []);
+
+  const toggleAppFullscreen = () => {
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+    const rootEl = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+
+    const isCurrentlyFs = Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+
+    try {
+      if (!isCurrentlyFs) {
+        if (rootEl.requestFullscreen) {
+          rootEl.requestFullscreen().catch(() => {});
+        } else if (rootEl.webkitRequestFullscreen) {
+          rootEl.webkitRequestFullscreen();
+        }
+      } else {
+        if (doc.exitFullscreen) {
+          doc.exitFullscreen().catch(() => {});
+        } else if (doc.webkitExitFullscreen) {
+          doc.webkitExitFullscreen();
+        }
+      }
+    } catch {
+      // Браузер не підтримує програмний Fullscreen API
+    }
+  };
 
   const handleCopyTicker = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -34,7 +80,7 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }
       <header className="bg-[#0b120d]/95 border-b border-[#233a2a] px-3 sm:px-4 md:px-6 py-2.5 backdrop-blur-md sticky top-0 z-40 select-none shadow-lg">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-3">
           
-          {/* Верхній ряд: Логотип + Активні статуси */}
+          {/* Верхній ряд: Логотип + Активні статуси + Повний екран застосунку */}
           <div className="flex items-center justify-between gap-2 min-w-0">
             <div className="flex items-center gap-2.5 shrink-0">
               <div className="w-8 h-8 rounded bg-[#132418] border border-[#2d5939] flex items-center justify-center shrink-0">
@@ -53,7 +99,7 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }
               </div>
             </div>
 
-            {/* Статуси гравця */}
+            {/* Статуси гравця та кнопка повноекранного режиму */}
             <div className="flex flex-wrap items-center justify-end gap-1 text-[10px] sm:text-[11px] font-mono">
               {isComfort && (
                 <span className="bg-[#122417] text-emerald-300 border border-emerald-700/80 px-2 py-0.5 rounded flex items-center gap-1 whitespace-nowrap">
@@ -75,6 +121,26 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }
                   Зомбований
                 </span>
               )}
+
+              <button
+                type="button"
+                onClick={toggleAppFullscreen}
+                title={isAppFullscreen ? 'Вийти з повноекранного режиму' : 'Розгорнути застосунок на весь екран'}
+                aria-label={isAppFullscreen ? 'Вийти з повноекранного режиму' : 'Розгорнути застосунок на весь екран'}
+                className="bg-[#132619] hover:bg-[#1d3b27] active:scale-95 text-emerald-300 border border-emerald-600/80 px-2 py-1 rounded flex items-center gap-1 whitespace-nowrap transition shadow-sm cursor-pointer ml-0.5"
+              >
+                {isAppFullscreen ? (
+                  <>
+                    <Minimize2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="hidden md:inline text-[10px] font-bold">Згорнути</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="hidden md:inline text-[10px] font-bold">Весь екран</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
 

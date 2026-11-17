@@ -755,7 +755,7 @@ export default function App() {
     // 2. Перевірка знаходження луту
     const lootRoll = Math.random();
     if (lootRoll < choice.lootChance) {
-      const foundItem = getRandomLoot(sectorBiome, sectorName);
+      const foundItem = getRandomLoot(sectorBiome, sectorName, choice.preferredLootIds);
       let chipsFound = 0;
 
       if (foundItem.id === 'microchip') {
