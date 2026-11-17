@@ -13,6 +13,8 @@ import { detectGridWater, getCachedSectorTerrain } from './utils/waterDetectorSe
 import { useGameLoop } from './hooks/useGameLoop';
 import { useNotifications } from './hooks/useNotifications';
 import { useRadioSync } from './hooks/useRadioSync';
+import { useStashesAndCamps } from './hooks/useStashesAndCamps';
+import type { SectorStash } from './types/game';
 import {
   usePlayerPersistence,
   saveActiveExpedition,
@@ -104,6 +106,20 @@ export default function App() {
     syncGameState(nextPlayer);
   };
 
+  // Схрони та табори інших гравців
+  const {
+    ownStashes,
+    foreignCamps,
+    getOwnStashAt,
+    getForeignCampAt,
+    createDeathStash,
+    claimOwnStash,
+    tryLootForeignStashAt
+  } = useStashesAndCamps(notify);
+
+  const currentOwnStash = getOwnStashAt(coords.lat, coords.lng);
+  const currentForeignCamp = getForeignCampAt(coords.lat, coords.lng);
+
   // Стан непритомності та кулдаун крику SOS
   const isUnconscious = player.hp <= 0 || player.conditions.includes('unconscious');
   const [sosCooldown, setSosCooldown] = useState<number>(0);
@@ -138,8 +154,20 @@ export default function App() {
     setActiveTab('radio');
   };
 
-  const handleSurrender = () => {
-    const lostItemsCount = inventory.reduce((sum, item) => sum + item.count, 0);
+  const handleSurrender = async () => {
+    const deathLat = coords.lat;
+    const deathLng = coords.lng;
+    const droppedItems = [...inventory];
+    const droppedCoins = player.astatCoins;
+    const lostItemsCount = droppedItems.reduce((sum, item) => sum + item.count, 0);
+
+    const stashCreated = await createDeathStash(
+      deathLat,
+      deathLng,
+      player.callsign || player.name,
+      droppedItems,
+      droppedCoins
+    );
 
     const respawnCoords = { ...campCoords };
     setCoords(respawnCoords);
@@ -167,10 +195,42 @@ export default function App() {
     syncGameState(respawnedPlayer, [], respawnCoords);
 
     notify(
-      `💀 Ви здалися та загинули. ${lostItemsCount} предметів спорядження залишилося на секторі.`,
+      stashCreated
+        ? `💀 Ви загинули. На координатах [${deathLat.toFixed(4)}°, ${deathLng.toFixed(4)}°] залишився схрон (${lostItemsCount} речей)!`
+        : `💀 Ви здалися та загинули. Повернення до базового табору.`,
       'danger'
     );
     setActiveTab('map');
+  };
+
+  const handleClaimOwnStash = async (stash: SectorStash) => {
+    const recovered = await claimOwnStash(stash);
+    if (!recovered) return;
+
+    const mergedInventory = [...inventory];
+    for (const item of recovered.items) {
+      const idx = mergedInventory.findIndex((i) => i.id === item.id);
+      if (idx >= 0) {
+        mergedInventory[idx] = { ...mergedInventory[idx], count: mergedInventory[idx].count + item.count };
+      } else {
+        mergedInventory.push({ ...item });
+      }
+    }
+
+    const updatedPlayer: PlayerStats = {
+      ...player,
+      astatCoins: player.astatCoins + recovered.coins
+    };
+
+    setInventory(mergedInventory);
+    setPlayer(updatedPlayer);
+    syncGameState(updatedPlayer, mergedInventory);
+
+    const totalRecovered = recovered.items.reduce((s, i) => s + i.count, 0);
+    notify(
+      `🎒 Схрон повернуто! Отримано ${totalRecovered} предметів${recovered.coins > 0 ? ` та ${recovered.coins} мікросхем` : ''}.`,
+      'success'
+    );
   };
 
   const handleExpeditionComplete = (expData: ExpeditionState) => {
@@ -370,7 +430,7 @@ export default function App() {
     }
   };
 
-  const handleResolveSearchChoice = (choice: SearchEventChoice) => {
+  const handleResolveSearchChoice = async (choice: SearchEventChoice) => {
     if (!activeSearchEvent || activeSearchEvent.resolved) return;
 
     const { sectorName, sectorBiome } = activeSearchEvent;
@@ -449,6 +509,28 @@ export default function App() {
         }
       }
 
+      // Перевірка наявності схрону іншого гравця на цій локації (часткове лутання)
+      const foreignDiscoveryChance =
+        player.specialization === 'scout' || choice.riskLevel === 'high' ? 0.9 : 0.65;
+      const foreignLoot = await tryLootForeignStashAt(coords.lat, coords.lng, foreignDiscoveryChance);
+
+      if (foreignLoot) {
+        if (foreignLoot.takenItem) {
+          const fIdx = nextInventory.findIndex((i) => i.id === foreignLoot.takenItem!.id);
+          if (fIdx >= 0) {
+            nextInventory[fIdx] = {
+              ...nextInventory[fIdx],
+              count: nextInventory[fIdx].count + foreignLoot.takenItem.count
+            };
+          } else {
+            nextInventory.push({ ...foreignLoot.takenItem });
+          }
+        }
+        if (foreignLoot.takenCoins > 0) {
+          nextPlayer.astatCoins += foreignLoot.takenCoins;
+        }
+      }
+
       let healedHp = 0;
       if (choice.healBonus && choice.healBonus > 0) {
         const before = nextPlayer.hp;
@@ -474,11 +556,20 @@ export default function App() {
           foundItem: foundItem.id !== 'microchip' ? foundItem : undefined,
           chipsFound: chipsFound > 0 ? chipsFound : undefined,
           healedHp: healedHp > 0 ? healedHp : undefined,
-          gotRadiation
+          gotRadiation,
+          foreignStashLoot: foreignLoot
+            ? {
+                ownerCallsign: foreignLoot.stashOwnerCallsign,
+                takenItem: foreignLoot.takenItem,
+                takenCoins: foreignLoot.takenCoins
+              }
+            : undefined
         }
       });
 
-      if (foundItem.id !== 'microchip') {
+      if (foreignLoot) {
+        notify(`📦 Ви виявили чужий схрон (${foreignLoot.stashOwnerCallsign}) і забрали частину припасів!`, 'warn');
+      } else if (foundItem.id !== 'microchip') {
         notify(`🎒 Знайдено: ${foundItem.name} (+${foundItem.count || 1})`, 'success');
       } else if (chipsFound > 0) {
         notify(`📟 Знайдено мікросхем: +${chipsFound} шт.!`, 'success');
@@ -523,9 +614,20 @@ export default function App() {
   const handleRelocateCamp = () => {
     const distToCamp = calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng);
     if (distToCamp < 50) {
-      notify('Табір уже розбитий тут.', 'info');
+      notify('Ви у безпечному таборі. Вийдіть у сусідні сектори для пошуку припасів.', 'info');
       return;
     }
+
+    // Мітка: заборона перенесення табору на чужий схрон або табір
+    const foreignCamp = getForeignCampAt(coords.lat, coords.lng);
+    if (foreignCamp) {
+      notify(
+        `🛡️ Це табір виживанця «${foreignCamp.ownerCallsign}». Пошук предметів на території чужої бази заблоковано!`,
+        'warn'
+      );
+      return;
+    }
+
     const relocateCost = player.specialization === 'engineer' ? 50 : 100;
     if (player.astatCoins < relocateCost) {
       notify(`Для перенесення потрібно ${relocateCost} мікросхем!`, 'danger');
@@ -687,11 +789,18 @@ export default function App() {
             activeSearchEvent={activeSearchEvent}
             onSelectSearchChoice={handleResolveSearchChoice}
             onCloseSearchEvent={() => setActiveSearchEvent(null)}
+            ownStashes={ownStashes}
+            foreignCamps={foreignCamps}
+            currentOwnStash={currentOwnStash}
+            currentForeignCamp={currentForeignCamp}
+            onClaimOwnStash={handleClaimOwnStash}
           />
         )}
+
         {activeTab === 'inventory' && (
           <InventoryView inventory={inventory} coins={player.astatCoins} onUseItem={handleUseItem} />
         )}
+
         {activeTab === 'radio' && (
           <RadioView
             messages={radioMessages}

@@ -90,4 +90,23 @@ export interface NotificationState {
   type: 'info' | 'warn' | 'danger' | 'success';
 }
 
+export interface SectorStash {
+  id: string;
+  ownerId: string;
+  ownerCallsign: string;
+  lat: number;
+  lng: number;
+  items: InventoryItem[];
+  coins: number;
+  createdAt?: string;
+  isLooted?: boolean;
+}
+
+export interface OtherPlayerCamp {
+  ownerId: string;
+  ownerCallsign: string;
+  lat: number;
+  lng: number;
+}
+
 export type TabType = 'map' | 'inventory' | 'radio' | 'profile' | 'architecture';

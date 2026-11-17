@@ -9,7 +9,8 @@ import {
   Package,
   Skull,
   Sparkles,
-  Eye
+  Eye,
+  Archive
 } from 'lucide-react';
 import type { InventoryItem, Specialization } from '../types/game';
 import type { SearchEventChoice, SearchEventScenario } from '../constants/searchEvents';
@@ -27,6 +28,11 @@ export interface ActiveSearchEventState {
     gotBleeding?: boolean;
     gotRadiation?: boolean;
     healedHp?: number;
+    foreignStashLoot?: {
+      ownerCallsign: string;
+      takenItem?: InventoryItem;
+      takenCoins: number;
+    };
   };
 }
 
@@ -35,7 +41,7 @@ interface SearchEventModalProps {
   specialization: Specialization;
   onSelectChoice: (choice: SearchEventChoice) => void;
   onClose: () => void;
-  embedded?: boolean; // true коли рендериться всередині повноекранної мапи (#top-layer)
+  embedded?: boolean;
 }
 
 const SPEC_LABELS: Record<Specialization, { label: string; icon: React.ReactNode }> = {
@@ -181,6 +187,28 @@ export const SearchEventModal: React.FC<SearchEventModalProps> = ({
                   <div className="flex items-center gap-2 text-amber-300 font-bold">
                     <Sparkles className="w-4 h-4 shrink-0" />
                     <span>Додатково знайдено мікросхем: +{resolved.chipsFound} шт.</span>
+                  </div>
+                )}
+
+                {resolved.foreignStashLoot && (
+                  <div className="p-2 rounded bg-amber-950/60 border border-amber-500/70 text-amber-200 space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                      <Archive className="w-4 h-4 shrink-0" />
+                      <span>
+                        Виявлено прихований схрон виживанця «{resolved.foreignStashLoot.ownerCallsign}»!
+                      </span>
+                    </div>
+                    {resolved.foreignStashLoot.takenItem && (
+                      <div className="text-[11px] pl-5">
+                        • Забрано зі схрону: <b>{resolved.foreignStashLoot.takenItem.name}</b> (+
+                        {resolved.foreignStashLoot.takenItem.count})
+                      </div>
+                    )}
+                    {resolved.foreignStashLoot.takenCoins > 0 && (
+                      <div className="text-[11px] pl-5">
+                        • Знайдено мікросхем у підсумку: <b>+{resolved.foreignStashLoot.takenCoins} шт.</b>
+                      </div>
+                    )}
                   </div>
                 )}
 

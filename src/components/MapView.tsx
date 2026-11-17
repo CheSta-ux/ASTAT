@@ -3,9 +3,18 @@ import {
   MapPin, Eye, Bed, Tent, Footprints, AlertCircle, Waves, 
   Building2, Factory, Route, Anchor, 
   Compass, Ship, Zap, Mountain, Crosshair, Wheat, TreePine, 
-  Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed
+  Clock, Lock, CheckCircle2, Radio, HelpCircle, LocateFixed,
+  Archive, ShieldAlert
 } from 'lucide-react';
-import type { Coordinates, ExpeditionState, NotificationState, PlayerStats, SectorDefinition } from '../types/game';
+import type {
+  Coordinates,
+  ExpeditionState,
+  NotificationState,
+  OtherPlayerCamp,
+  PlayerStats,
+  SectorDefinition,
+  SectorStash
+} from '../types/game';
 import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisticTravelTime } from '../utils/coordinates';
 import { createSectorData } from '../utils/sectorGenerator';
 import type { SectorSearchRecord } from '../utils/sectorCooldownManager';
@@ -40,6 +49,11 @@ interface MapViewProps {
   activeSearchEvent?: ActiveSearchEventState | null;
   onSelectSearchChoice?: (choice: SearchEventChoice) => void;
   onCloseSearchEvent?: () => void;
+  ownStashes?: SectorStash[];
+  foreignCamps?: OtherPlayerCamp[];
+  currentOwnStash?: SectorStash | null;
+  currentForeignCamp?: OtherPlayerCamp | null;
+  onClaimOwnStash?: (stash: SectorStash) => void;
 }
 
 const SectorTacticalIcon: React.FC<{ icon: string; className?: string }> = ({ icon, className = 'w-5 h-5' }) => {
@@ -98,7 +112,12 @@ export const MapView: React.FC<MapViewProps> = ({
   onRelocateCamp,
   sectorSearches,
   exploredSectors = [],
-  onOpenAfkModal
+  onOpenAfkModal,
+  ownStashes = [],
+  foreignCamps = [],
+  currentOwnStash,
+  currentForeignCamp,
+  onClaimOwnStash
 }) => {
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
@@ -123,7 +142,6 @@ export const MapView: React.FC<MapViewProps> = ({
     const movedMeters = calculateHaversineDistanceMeters(prev.lat, prev.lng, coords.lat, coords.lng);
     if (movedMeters < 20) return;
 
-    // Якщо дистанція > 5 км (початкове завантаження профілю або телепорт на базу) — центруємо миттєво
     if (movedMeters > 5000) {
       setPanPx({ x: 0, y: 0 });
       return;
@@ -860,7 +878,81 @@ export const MapView: React.FC<MapViewProps> = ({
               </div>
             )}
 
-            {/* В) СЕКТОРИ СВІТУ */}
+            {/* В1) ВЛАСНІ СХРОНИ НА МІСЦІ ЗАГИБЕЛІ (ВИДИМІ НАВІТЬ КРІЗЬ ТУМАН) */}
+            {ownStashes.map((stash) => {
+              const sWorld = latLngToWorldPixel(stash.lat, stash.lng, zoom);
+              const sx = sWorld.x - cameraWorld.x + containerSize.width / 2;
+              const sy = sWorld.y - cameraWorld.y + containerSize.height / 2;
+              const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, stash.lat, stash.lng));
+              const totalCount = stash.items.reduce((acc, i) => acc + i.count, 0);
+
+              if (sx < -60 || sx > containerSize.width + 60 || sy < -60 || sy > containerSize.height + 60) {
+                return null;
+              }
+
+              return (
+                <div
+                  key={stash.id}
+                  style={{
+                    position: 'absolute',
+                    left: sx,
+                    top: sy,
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: 32
+                  }}
+                  className="pointer-events-none flex flex-col items-center justify-center"
+                >
+                  <div className="relative flex items-center justify-center">
+                    <div className="absolute w-11 h-11 rounded-full border-2 border-amber-400 bg-amber-500/20 shadow-[0_0_18px_rgba(245,158,11,0.85)] animate-ping" />
+                    <div className="relative z-10 p-2 rounded-full bg-[#1f1207] border-2 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.95)]">
+                      <Archive className="w-4 h-4 text-amber-300" />
+                    </div>
+                  </div>
+                  <span className="text-[8.5px] font-mono font-bold text-amber-200 bg-[#1a1007]/95 px-1.5 py-0.5 rounded border border-amber-500/90 mt-1 shadow whitespace-nowrap">
+                    СХРОН ({totalCount} шт • {dist}м)
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* В2) ТАБОРИ ІНШИХ ВИЖИВАНЦІВ У РАДІУСІ РАДАРА */}
+            {foreignCamps.map((fc) => {
+              const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, fc.lat, fc.lng));
+              if (dist > 165) return null;
+
+              const fWorld = latLngToWorldPixel(fc.lat, fc.lng, zoom);
+              const fx = fWorld.x - cameraWorld.x + containerSize.width / 2;
+              const fy = fWorld.y - cameraWorld.y + containerSize.height / 2;
+
+              if (fx < -60 || fx > containerSize.width + 60 || fy < -60 || fy > containerSize.height + 60) {
+                return null;
+              }
+
+              return (
+                <div
+                  key={`camp-${fc.ownerId}`}
+                  style={{
+                    position: 'absolute',
+                    left: fx,
+                    top: fy,
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: 28
+                  }}
+                  className="pointer-events-none flex flex-col items-center justify-center"
+                >
+                  <div className="relative flex items-center justify-center">
+                    <div className="p-2 rounded-full bg-[#1a1410]/95 border border-orange-500/80 shadow-[0_0_10px_rgba(249,115,22,0.5)]">
+                      <ShieldAlert className="w-4 h-4 text-orange-400" />
+                    </div>
+                  </div>
+                  <span className="text-[8px] font-mono font-bold text-orange-200 bg-[#17100a]/90 px-1.5 py-0.5 rounded border border-orange-700/80 mt-1 shadow whitespace-nowrap">
+                    БАЗА: {fc.ownerCallsign}
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Г) СЕКТОРИ СВІТУ */}
             {visibleSectors.map((sector) => {
               if (sector.isCurrent || (sector.isCampSector && !isAtCamp)) return null;
 
@@ -1024,26 +1116,50 @@ export const MapView: React.FC<MapViewProps> = ({
           )}
 
           {!expedition && (!selectedTarget || isSelectedCurrent) && (
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={onSearch}
-                disabled={isAtCamp || currentSearchStatus.isDepleted}
-                className="py-2 px-2 bg-[#1b3321] hover:bg-[#25462e] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#376342] disabled:border-[#1d2a1f] text-emerald-100 font-bold text-xs rounded flex items-center justify-center gap-1.5 shadow active:scale-95 transition"
-              >
-                <Eye className="w-3.5 h-3.5 shrink-0" />
-                <span>{isAtCamp ? 'У таборі' : currentSearchStatus.isDepleted ? 'Виснажено' : 'Огляд (-4%)'}</span>
-              </button>
+            <div className="space-y-2">
+              {currentOwnStash && onClaimOwnStash && (
+                <button
+                  type="button"
+                  onClick={() => onClaimOwnStash(currentOwnStash)}
+                  className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs rounded-lg flex items-center justify-center gap-2 shadow-lg active:scale-95 transition animate-pulse"
+                >
+                  <Archive className="w-4 h-4 shrink-0" />
+                  <span>
+                    Забрати свій схрон ({currentOwnStash.items.reduce((s, i) => s + i.count, 0)} речей
+                    {currentOwnStash.coins > 0 ? ` + ${currentOwnStash.coins} плат` : ''})
+                  </span>
+                </button>
+              )}
 
-              <button
-                type="button"
-                onClick={onRest}
-                disabled={!isAtCamp}
-                className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2920] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5 active:scale-95 transition"
-              >
-                <Bed className="w-3.5 h-3.5 shrink-0" />
-                <span>Відпочити</span>
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={onSearch}
+                  disabled={isAtCamp || Boolean(currentForeignCamp) || currentSearchStatus.isDepleted}
+                  className="py-2 px-2 bg-[#1b3321] hover:bg-[#25462e] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#376342] disabled:border-[#1d2a1f] text-emerald-100 font-bold text-xs rounded flex items-center justify-center gap-1.5 shadow active:scale-95 transition"
+                >
+                  <Eye className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {isAtCamp
+                      ? 'У таборі'
+                      : currentForeignCamp
+                      ? 'Чужий табір'
+                      : currentSearchStatus.isDepleted
+                      ? 'Виснажено'
+                      : 'Огляд (-4%)'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onRest}
+                  disabled={!isAtCamp}
+                  className="py-2 px-2 bg-[#16271c] hover:bg-[#203828] disabled:bg-[#121c15] disabled:text-[#455749] border border-[#2a4732] disabled:border-[#1d2920] text-slate-200 font-semibold text-xs rounded flex items-center justify-center gap-1.5 active:scale-95 transition"
+                >
+                  <Bed className="w-3.5 h-3.5 shrink-0" />
+                  <span>Відпочити</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1172,16 +1288,41 @@ export const MapView: React.FC<MapViewProps> = ({
             </div>
 
             <div className="mt-4 space-y-2">
+              {currentForeignCamp && !isAtCamp && (
+                <div className="p-2.5 rounded bg-orange-950/60 border border-orange-600/80 text-orange-200 text-[11px] flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-orange-400 shrink-0" />
+                  <span>
+                    Укріплений табір виживанця <b>«{currentForeignCamp.ownerCallsign}»</b>. Пошук предметів на території чужої бази заблоковано.
+                  </span>
+                </div>
+              )}
+
+              {currentOwnStash && onClaimOwnStash && (
+                <button
+                  type="button"
+                  onClick={() => onClaimOwnStash(currentOwnStash)}
+                  className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs rounded transition flex items-center justify-center gap-2 shadow-lg animate-pulse"
+                >
+                  <Archive className="w-4 h-4 shrink-0" />
+                  <span>
+                    Забрати свій схрон ({currentOwnStash.items.reduce((s, i) => s + i.count, 0)} речей
+                    {currentOwnStash.coins > 0 ? ` + ${currentOwnStash.coins} плат` : ''})
+                  </span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={onSearch}
-                disabled={Boolean(expedition) || isAtCamp || currentSearchStatus.isDepleted}
+                disabled={Boolean(expedition) || isAtCamp || Boolean(currentForeignCamp) || currentSearchStatus.isDepleted}
                 className="w-full py-2.5 px-3 bg-[#1e3825] hover:bg-[#2b5135] disabled:bg-[#17221a] disabled:text-[#55695a] border border-[#3b6e47] disabled:border-[#223126] text-emerald-100 font-bold text-xs rounded transition flex items-center justify-center gap-2 shadow"
               >
                 <Eye className="w-4 h-4 shrink-0" />
                 <span>
                   {isAtCamp
                     ? 'У таборі немає луту'
+                    : currentForeignCamp
+                    ? 'Чужий табір (пошук заблоковано)'
                     : currentSearchStatus.isDepleted
                     ? `Виснажено (кулдаун: ${formatCooldownTimer(currentSearchStatus.cooldownRemainingMs)})`
                     : 'Оглянути місцевість (-4% ситості)'}
