@@ -13,7 +13,8 @@ import type {
   OtherPlayerCamp,
   PlayerStats,
   SectorDefinition,
-  SectorStash
+  SectorStash,
+  WorldEnvironment
 } from '../types/game';
 import { calculateHaversineDistanceMeters, offsetGeoBySectors, calculateRealisticTravelTime } from '../utils/coordinates';
 import { createSectorData } from '../utils/sectorGenerator';
@@ -54,6 +55,7 @@ interface MapViewProps {
   currentOwnStash?: SectorStash | null;
   currentForeignCamp?: OtherPlayerCamp | null;
   onClaimOwnStash?: (stash: SectorStash) => void;
+  environment?: WorldEnvironment;
 }
 
 const SectorTacticalIcon: React.FC<{ icon: string; className?: string }> = ({ icon, className = 'w-5 h-5' }) => {
@@ -117,7 +119,8 @@ export const MapView: React.FC<MapViewProps> = ({
   foreignCamps = [],
   currentOwnStash,
   currentForeignCamp,
-  onClaimOwnStash
+  onClaimOwnStash,
+  environment
 }) => {
   const zoom = 16;
   const [radarMap, setRadarMap] = useState<Record<string, SectorTerrainData>>({});
@@ -247,12 +250,15 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const isAtCamp = distanceToCampMeters < 50;
 
+  const liveRadarRadius = environment?.radarRadiusMeters ?? 165;
+
   const effectiveSpeedKmh = useMemo(() => {
     let speed = 4.5;
     if (player.specialization === 'scout') speed *= 1.25;
     if (player.conditions.includes('bleeding')) speed *= 0.5;
+    if (environment?.speedMultiplier) speed *= environment.speedMultiplier;
     return speed.toFixed(1);
-  }, [player.specialization, player.conditions]);
+  }, [player.specialization, player.conditions, environment?.speedMultiplier]);
 
   const relocateCampCost = player.specialization === 'engineer' ? 50 : 100;
 
@@ -413,7 +419,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const isCampSector = distFromCamp < 45;
       const isCurrentPlayerPos = distFromPlayer < 45;
 
-      const isLiveRadar = distFromPlayer <= 165;
+      const isLiveRadar = distFromPlayer <= liveRadarRadius;
       const isEverExplored = exploredSet.has(sec.key) || isCurrentPlayerPos || isCampSector;
       const isFog = !isLiveRadar && !isEverExplored;
 
@@ -458,7 +464,7 @@ export const MapView: React.FC<MapViewProps> = ({
         screenY
       };
     });
-  }, [sectorList, coords, campCoords, exploredSet, radarMap, sectorSearches, currentTime, expeditionTargetCoords, cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height]);
+  }, [sectorList, coords, campCoords, exploredSet, radarMap, sectorSearches, currentTime, expeditionTargetCoords, cameraWorld.x, cameraWorld.y, containerSize.width, containerSize.height, liveRadarRadius]);
 
   // Шар туману Canvas
   useEffect(() => {
@@ -513,17 +519,18 @@ export const MapView: React.FC<MapViewProps> = ({
 
     const pSx = playerScreen.x + FOG_OVERFLOW;
     const pSy = playerScreen.y + FOG_OVERFLOW;
-    const liveGrad = ctx.createRadialGradient(pSx, pSy, 45, pSx, pSy, 165);
+    const innerRadius = Math.round(liveRadarRadius * 0.28);
+    const liveGrad = ctx.createRadialGradient(pSx, pSy, innerRadius, pSx, pSy, liveRadarRadius);
     liveGrad.addColorStop(0, 'rgba(0,0,0,1)');
     liveGrad.addColorStop(0.7, 'rgba(0,0,0,0.95)');
     liveGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = liveGrad;
     ctx.beginPath();
-    ctx.arc(pSx, pSy, 165, 0, Math.PI * 2);
+    ctx.arc(pSx, pSy, liveRadarRadius, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.globalCompositeOperation = 'source-over';
-  }, [containerSize.width, containerSize.height, cameraWorld.x, cameraWorld.y, campScreen.x, campScreen.y, playerScreen.x, playerScreen.y, exploredSectors]);
+  }, [containerSize.width, containerSize.height, cameraWorld.x, cameraWorld.y, campScreen.x, campScreen.y, playerScreen.x, playerScreen.y, exploredSectors, liveRadarRadius]);
 
   // Інформація про поточний сектор
   const currentSectorInfo = useMemo(() => {
@@ -561,9 +568,10 @@ export const MapView: React.FC<MapViewProps> = ({
       coords,
       { x: 0, y: 0, lat: selectedTarget.lat, lng: selectedTarget.lng },
       player.conditions,
-      player.specialization
+      player.specialization,
+      environment
     );
-  }, [selectedTarget, isSelectedCurrent, coords, player]);
+  }, [selectedTarget, isSelectedCurrent, coords, player, environment]);
 
   // Інформація про марш
   const transitProgress = useMemo(() => {
@@ -708,7 +716,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
     const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, sLat, sLng));
     const isCamp = calculateHaversineDistanceMeters(sLat, sLng, campCoords.lat, campCoords.lng) < 45;
-    const isFog = !exploredSet.has(sKey) && dist > 165 && !isCamp;
+    const isFog = !exploredSet.has(sKey) && dist > liveRadarRadius && !isCamp;
     const rawClass = terrainCacheRef.current[sKey] || radarMap[sKey];
 
     setSelectedTarget({
@@ -804,6 +812,40 @@ export const MapView: React.FC<MapViewProps> = ({
               />
             ))}
           </div>
+
+          {/* 1.5 Атмосферний шар часу доби та опадів */}
+          {environment && (
+            <div className="absolute inset-0 pointer-events-none z-[5] overflow-hidden">
+              {environment.dayPhase === 'night' && (
+                <div className="absolute inset-0 bg-[#030b14]/45 mix-blend-multiply" />
+              )}
+              {(environment.dayPhase === 'dawn' || environment.dayPhase === 'dusk') && (
+                <div className="absolute inset-0 bg-amber-950/20" />
+              )}
+              {environment.weatherCategory === 'fog' && (
+                <div className="absolute inset-0 bg-slate-300/10" />
+              )}
+              {(environment.weatherCategory === 'rain' || environment.weatherCategory === 'storm') && (
+                <div
+                  className="absolute inset-0 opacity-35 animate-pulse"
+                  style={{
+                    backgroundImage:
+                      'repeating-linear-gradient(108deg, transparent 0px, transparent 14px, rgba(125, 211, 252, 0.35) 15px, transparent 16px)'
+                  }}
+                />
+              )}
+              {environment.weatherCategory === 'snow' && (
+                <div
+                  className="absolute inset-0 opacity-40 animate-pulse"
+                  style={{
+                    backgroundImage:
+                      'radial-gradient(circle, rgba(240, 249, 255, 0.75) 1px, transparent 1.5px)',
+                    backgroundSize: '28px 28px'
+                  }}
+                />
+              )}
+            </div>
+          )}
 
           {/* 2. Шар туману війни */}
           <canvas
@@ -918,7 +960,7 @@ export const MapView: React.FC<MapViewProps> = ({
             {/* В2) ТАБОРИ ІНШИХ ВИЖИВАНЦІВ У РАДІУСІ РАДАРА */}
             {foreignCamps.map((fc) => {
               const dist = Math.round(calculateHaversineDistanceMeters(coords.lat, coords.lng, fc.lat, fc.lng));
-              if (dist > 165) return null;
+              if (dist > liveRadarRadius) return null;
 
               const fWorld = latLngToWorldPixel(fc.lat, fc.lng, zoom);
               const fx = fWorld.x - cameraWorld.x + containerSize.width / 2;
@@ -1166,7 +1208,9 @@ export const MapView: React.FC<MapViewProps> = ({
 
         <div className="mt-1.5 pt-1.5 border-t border-[#1a291f] flex items-center justify-between text-[10px] text-[#7c9683] z-30 bg-[#08100b]/90 px-2 py-1 rounded backdrop-blur-md">
           <span className="truncate">* Тягніть мапу • Клікайте на туман</span>
-          <span className="shrink-0 ml-2">Радар активний</span>
+          <span className="shrink-0 ml-2">
+            Радар: {liveRadarRadius}м{environment ? ` • ${environment.dayPhaseLabel}` : ''}
+          </span>
         </div>
       </div>
 

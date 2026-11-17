@@ -14,6 +14,7 @@ import { useGameLoop } from './hooks/useGameLoop';
 import { useNotifications } from './hooks/useNotifications';
 import { useRadioSync } from './hooks/useRadioSync';
 import { useStashesAndCamps } from './hooks/useStashesAndCamps';
+import { useWorldEnvironment } from './hooks/useWorldEnvironment';
 import type { SectorStash } from './types/game';
 import {
   usePlayerPersistence,
@@ -78,6 +79,9 @@ export default function App() {
   const [expedition, setExpedition] = useState<ExpeditionState | null>(null);
   const [activeSearchEvent, setActiveSearchEvent] = useState<ActiveSearchEventState | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>(INITIAL_AWAKENING_INVENTORY);
+
+  // Погода та цикл дня/ночі за реальними координатами
+  const worldEnvironment = useWorldEnvironment(coords, player.specialization);
 
   const { notifications, notify } = useNotifications();
   const { radioMessages, sendMessage } = useRadioSync(player, notify);
@@ -332,7 +336,13 @@ export default function App() {
       return;
     }
 
-    const estimates = calculateRealisticTravelTime(coords, targetCoordObj, player.conditions, player.specialization);
+    const estimates = calculateRealisticTravelTime(
+      coords,
+      targetCoordObj,
+      player.conditions,
+      player.specialization,
+      worldEnvironment
+    );
 
     if (player.hunger < estimates.hungerCost && player.hunger < 15) {
       notify('Критичне виснаження! Поїжте перед марш-кидком.', 'danger');
@@ -376,6 +386,15 @@ export default function App() {
     const distToCamp = calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng);
     if (distToCamp < 50) {
       notify('Ви у безпечному таборі. Вийдіть у сусідні сектори для пошуку припасів.', 'info');
+      return;
+    }
+
+    const foreignCamp = getForeignCampAt(coords.lat, coords.lng);
+    if (foreignCamp) {
+      notify(
+        `🛡️ Це табір виживанця «${foreignCamp.ownerCallsign}». Пошук предметів на території чужої бази заблоковано!`,
+        'warn'
+      );
       return;
     }
 
@@ -614,15 +633,14 @@ export default function App() {
   const handleRelocateCamp = () => {
     const distToCamp = calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng);
     if (distToCamp < 50) {
-      notify('Ви у безпечному таборі. Вийдіть у сусідні сектори для пошуку припасів.', 'info');
+      notify('Табір уже розбитий тут.', 'info');
       return;
     }
 
-    // Мітка: заборона перенесення табору на чужий схрон або табір
     const foreignCamp = getForeignCampAt(coords.lat, coords.lng);
     if (foreignCamp) {
       notify(
-        `🛡️ Це табір виживанця «${foreignCamp.ownerCallsign}». Пошук предметів на території чужої бази заблоковано!`,
+        `🛡️ Тут розташований табір виживанця «${foreignCamp.ownerCallsign}». Перенесення бази неможливе!`,
         'warn'
       );
       return;
@@ -712,7 +730,7 @@ export default function App() {
         ))}
       </div>
 
-      <HeaderHUD player={player} />
+      <HeaderHUD player={player} environment={worldEnvironment} />
 
       {/* Банер маршу в дорозі поза вкладкою карти */}
       {expedition && activeTab !== 'map' && (
@@ -794,6 +812,7 @@ export default function App() {
             currentOwnStash={currentOwnStash}
             currentForeignCamp={currentForeignCamp}
             onClaimOwnStash={handleClaimOwnStash}
+            environment={worldEnvironment}
           />
         )}
 

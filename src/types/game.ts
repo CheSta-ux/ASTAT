@@ -110,3 +110,25 @@ export interface OtherPlayerCamp {
 }
 
 export type TabType = 'map' | 'inventory' | 'radio' | 'profile' | 'architecture';
+
+export type DayPhase = 'dawn' | 'day' | 'dusk' | 'night';
+
+export type WeatherCategory = 'clear' | 'cloudy' | 'fog' | 'rain' | 'snow' | 'storm';
+
+export interface WorldEnvironment {
+  temperature: number;       // °C
+  windSpeed: number;         // км/год
+  weatherCode: number;       // WMO weather code
+  weatherCategory: WeatherCategory;
+  weatherLabel: string;      // Напр. "Ясно", "Туман", "Дощ"
+  isDay: boolean;
+  dayPhase: DayPhase;
+  dayPhaseLabel: string;     // "Світанок", "День", "Сутінки", "Ніч"
+  localTimeStr: string;      // Локальний час у секторі, напр. "01:45"
+  sunriseStr: string;        // Час сходу сонця
+  sunsetStr: string;         // Час заходу сонця
+  isFreezing: boolean;       // temperature < 0
+  radarRadiusMeters: number; // Динамічний радіус огляду (базово 165 м)
+  speedMultiplier: number;   // Множник швидкості маршу
+  hungerMultiplier: number;  // Множник витрати ситості
+}

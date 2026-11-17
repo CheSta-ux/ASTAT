@@ -45,16 +45,21 @@ export const calculateRealisticTravelTime = (
   origin: Coordinates,
   target: Coordinates,
   conditions: PlayerCondition[],
-  spec: Specialization
+  spec: Specialization,
+  envModifiers?: { speedMultiplier?: number; hungerMultiplier?: number }
 ): { seconds: number; meters: number; hungerCost: number } => {
   const meters = calculateHaversineDistanceMeters(origin.lat, origin.lng, target.lat, target.lng);
   let speedMps = 1.25; // 4.5 км/год
 
   if (spec === 'scout') speedMps *= 1.25;
   if (conditions.includes('bleeding')) speedMps *= 0.5;
+  if (envModifiers?.speedMultiplier) {
+    speedMps *= envModifiers.speedMultiplier;
+  }
 
   const seconds = Math.max(1, Math.round(meters / speedMps));
-  const hungerCost = Math.max(1, Math.round((meters / SECTOR_METERS) * 1.2));
+  const hungerMult = envModifiers?.hungerMultiplier ?? 1;
+  const hungerCost = Math.max(1, Math.round((meters / SECTOR_METERS) * 1.2 * hungerMult));
 
   return { seconds, meters, hungerCost };
 };

@@ -2,18 +2,34 @@ import React, { useState, useEffect } from 'react';
 import { 
   Heart, Flame, Shield, Sparkles, Coins, Copy, Check, 
   Activity, AlertTriangle, Bed, Utensils, Crosshair, X,
-  Maximize2, Minimize2
+  Maximize2, Minimize2, Sun, Moon, Sunset, Sunrise,
+  Cloud, CloudRain, CloudSnow, CloudFog, CloudLightning, Wind, Compass
 } from 'lucide-react';
-import type { PlayerStats } from '../types/game';
+import type { PlayerStats, WorldEnvironment } from '../types/game';
 import { TOKEN_CONFIG } from '../constants/token';
 
 interface HeaderHUDProps {
   player: PlayerStats;
   tokenBalance?: number;
+  environment?: WorldEnvironment;
 }
 
-export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }) => {
-  const [activePopup, setActivePopup] = useState<'token' | 'hp' | 'hunger' | null>(null);
+export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0, environment }) => {
+  const [activePopup, setActivePopup] = useState<'token' | 'hp' | 'hunger' | 'weather' | null>(null);
+
+  const renderEnvIcon = () => {
+    if (!environment) return <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+    if (environment.weatherCategory === 'storm') return <CloudLightning className="w-3.5 h-3.5 text-purple-400 animate-pulse shrink-0" />;
+    if (environment.weatherCategory === 'rain') return <CloudRain className="w-3.5 h-3.5 text-cyan-400 shrink-0" />;
+    if (environment.weatherCategory === 'snow') return <CloudSnow className="w-3.5 h-3.5 text-sky-200 shrink-0" />;
+    if (environment.weatherCategory === 'fog') return <CloudFog className="w-3.5 h-3.5 text-slate-300 shrink-0" />;
+    if (environment.dayPhase === 'night') return <Moon className="w-3.5 h-3.5 text-indigo-300 shrink-0" />;
+    if (environment.dayPhase === 'dawn') return <Sunrise className="w-3.5 h-3.5 text-amber-300 shrink-0" />;
+    if (environment.dayPhase === 'dusk') return <Sunset className="w-3.5 h-3.5 text-orange-400 shrink-0" />;
+    if (environment.weatherCategory === 'cloudy') return <Cloud className="w-3.5 h-3.5 text-slate-300 shrink-0" />;
+    return <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+  };
+
   const [copied, setCopied] = useState(false);
   const [isAppFullscreen, setIsAppFullscreen] = useState(false);
 
@@ -120,6 +136,26 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }
                 <span className="bg-red-900/95 text-red-100 border border-red-500 px-2 py-0.5 rounded font-bold whitespace-nowrap">
                   Зомбований
                 </span>
+              )}
+
+              {environment && (
+                <button
+                  type="button"
+                  onClick={() => setActivePopup('weather')}
+                  title="Відкрити метеозведення сектора"
+                  className={`px-2 py-0.5 rounded border flex items-center gap-1.5 whitespace-nowrap transition active:scale-95 cursor-pointer ${
+                    environment.dayPhase === 'night'
+                      ? 'bg-[#101526] text-indigo-200 border-indigo-700/80 hover:border-indigo-400'
+                      : 'bg-[#122118] text-slate-200 border-[#2f543a] hover:border-emerald-400'
+                  }`}
+                >
+                  {renderEnvIcon()}
+                  <span className="font-bold">{environment.localTimeStr}</span>
+                  <span>
+                    {environment.temperature > 0 ? `+${environment.temperature}°` : `${environment.temperature}°`}
+                  </span>
+                  <span className="hidden sm:inline opacity-85">• {environment.weatherLabel}</span>
+                </button>
               )}
 
               <button
@@ -330,6 +366,67 @@ export const HeaderHUD: React.FC<HeaderHUDProps> = ({ player, tokenBalance = 0 }
 
                 <div className="text-[11px] text-[#7c9984] text-center italic pt-1">
                   * Накопичення токенів почнеться після підключення Web3-контракту.
+                </div>
+              </div>
+            )}
+
+            {activePopup === 'weather' && environment && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 border-b border-[#1f3826] pb-2.5 pr-6">
+                  {renderEnvIcon()}
+                  <div>
+                    <h3 className="font-bold text-slate-100 text-sm">
+                      Метеорологія та Час доби
+                    </h3>
+                    <div className="text-[11px] text-[#8ba893]">
+                      {environment.dayPhaseLabel} • Локальний час {environment.localTimeStr}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 bg-[#09100b] p-3 rounded border border-[#1d2d21] text-xs">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[#87a68f]">Погода в секторі:</span>
+                    <b className="text-slate-100">
+                      {environment.weatherLabel} ({environment.temperature > 0 ? `+${environment.temperature}°C` : `${environment.temperature}°C`})
+                    </b>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[#87a68f] flex items-center gap-1">
+                      <Wind className="w-3.5 h-3.5 text-emerald-400" /> Вітер:
+                    </span>
+                    <span className="text-slate-200 font-bold">{environment.windSpeed} км/год</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[#87a68f]">Схід / Захід сонця:</span>
+                    <span className="text-amber-300 font-bold">
+                      {environment.sunriseStr} / {environment.sunsetStr}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 pt-1 border-t border-[#18261c]">
+                    <span className="text-[#87a68f] flex items-center gap-1">
+                      <Compass className="w-3.5 h-3.5 text-emerald-400" /> Дальність радара:
+                    </span>
+                    <b className={environment.radarRadiusMeters < 165 ? 'text-amber-300' : 'text-emerald-400'}>
+                      {environment.radarRadiusMeters} м {environment.radarRadiusMeters < 165 ? '(обмежено)' : '(повна)'}
+                    </b>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[#87a68f]">Швидкість маршу:</span>
+                    <b className={environment.speedMultiplier < 1 ? 'text-amber-300' : 'text-emerald-400'}>
+                      {Math.round(environment.speedMultiplier * 100)}%
+                    </b>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[#87a68f]">Витрата ситості:</span>
+                    <b className={environment.hungerMultiplier > 1 ? 'text-amber-300' : 'text-emerald-400'}>
+                      {Math.round(environment.hungerMultiplier * 100)}%
+                    </b>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-[#9eb8a5] leading-relaxed">
+                  * Уночі, в туман та опади радіус живого огляду звужується, а мороз і негода збільшують витрату калорій під час переходів.
                 </div>
               </div>
             )}
