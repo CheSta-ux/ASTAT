@@ -290,7 +290,15 @@ export default function App() {
 
       <MobileBottomNav activeTab={activeTab} setActiveTab={setActiveTab} isUnconscious={isUnconscious} notify={notify} />
 
-      {showAfkModal && expedition && <AfkModal expedition={expedition} onClose={() => setShowAfkModal(false)} />}
+      {showAfkModal && expedition && (
+        <AfkModal
+          expedition={expedition}
+          coords={coords}
+          player={player}
+          environment={worldEnvironment}
+          onClose={() => setShowAfkModal(false)}
+        />
+      )}
 
       {activeSearchEvent && (
         <SearchEventModal

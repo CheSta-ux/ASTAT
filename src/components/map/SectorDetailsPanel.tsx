@@ -9,7 +9,6 @@ import {
   Clock,
   Lock,
   CheckCircle2,
-  Radio,
   Archive,
   ShieldAlert
 } from 'lucide-react';
@@ -220,86 +219,41 @@ export const SectorDetailsSidebar: React.FC<SectorDetailsSidebarProps> = ({
   return (
     <div className="bg-[#101712] border border-[#233327] rounded-lg p-4 flex flex-col justify-between shadow-xl">
       {expedition && transitProgress && expeditionTargetCoords ? (
-        <div className="flex flex-col justify-between h-full space-y-4 animate-in fade-in duration-300">
-          <div>
-            <div className="flex items-center justify-between border-b border-[#1f3325] pb-2.5">
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
-                </span>
-                <span className="text-[10px] uppercase tracking-widest text-amber-300 font-bold font-mono">
-                  ТАКТИЧНИЙ МАРШ // У ДОРОЗІ
-                </span>
-              </div>
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-950/80 border border-amber-600/70 text-amber-300">
-                {transitProgress.percent}%
+        <div className="space-y-2.5 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+              </span>
+              <SectorTacticalIcon icon={transitProgress.destData.icon} className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="text-xs font-bold text-slate-100 truncate">
+                {transitProgress.destData.name}
               </span>
             </div>
 
-            <div className="mt-3">
-              <div className="text-[10px] text-[#71917a] uppercase font-mono">НАПРЯМОК РУХУ:</div>
-              <h3 className="text-base md:text-lg font-bold text-slate-100 flex items-center gap-2 mt-0.5">
-                <SectorTacticalIcon icon={transitProgress.destData.icon} className="w-5 h-5 text-amber-400" />
-                <span>{transitProgress.destData.name}</span>
-              </h3>
-              <div className="text-[10px] text-amber-300/80 font-mono mt-0.5">
-                GPS: {expeditionTargetCoords.lat.toFixed(5)}° N, {expeditionTargetCoords.lng.toFixed(5)}° E
-              </div>
-            </div>
-
-            <div className="mt-3.5 p-3 rounded-lg bg-[#0a120c] border border-[#1e3827] shadow-inner space-y-2.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[#8ba793] flex items-center gap-1.5 font-mono">
-                  <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin-slow" />
-                  Залишилось часу:
-                </span>
-                <b className="text-amber-300 font-mono text-sm tracking-wider">
-                  {formatTravelDuration(transitProgress.remainingSec)}
-                </b>
-              </div>
-
-              <div className="w-full bg-[#142318] h-2.5 rounded-full overflow-hidden border border-[#2b5936] p-0.5">
-                <div
-                  className="bg-amber-500 h-full rounded-full transition-all duration-300 shadow-[0_0_8px_rgba(245,158,11,0.8)]"
-                  style={{ width: `${transitProgress.percent}%` }}
-                />
-              </div>
-
-              <div className="flex items-center justify-between text-[10px] text-[#6b8573] font-mono">
-                <span>
-                  Пройдено: <b className="text-slate-200">{transitProgress.coveredMeters} м</b>
-                </span>
-                <span>
-                  Залишилось: <b className="text-amber-300">{transitProgress.remainingMeters} м</b>
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] font-mono">
-              <div className="p-2 rounded bg-[#121c15] border border-[#223828]">
-                <span className="text-[#6d8a74] block text-[9.5px]">ВИТРАТА СИТОСТІ:</span>
-                <b className="text-amber-400 mt-0.5 block">~{expedition.hungerCost}%</b>
-              </div>
-              <div className="p-2 rounded bg-[#121c15] border border-[#223828]">
-                <span className="text-[#6d8a74] block text-[9.5px]">ШВИДКІСТЬ ХОДУ:</span>
-                <b className="text-emerald-400 mt-0.5 block">{effectiveSpeedKmh} км/год</b>
-              </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-mono font-bold text-amber-300">
+                {formatTravelDuration(transitProgress.remainingSec)}
+              </span>
+              {onOpenAfkModal && (
+                <button
+                  type="button"
+                  onClick={onOpenAfkModal}
+                  className="px-2.5 py-1 bg-[#1a3321] hover:bg-[#25462f] border border-[#3b6b46] rounded text-[11px] font-bold text-emerald-200 transition active:scale-95"
+                >
+                  Деталі
+                </button>
+              )}
             </div>
           </div>
 
-          {onOpenAfkModal && (
-            <div className="pt-2 border-t border-[#1e3324]">
-              <button
-                type="button"
-                onClick={onOpenAfkModal}
-                className="w-full py-2 bg-[#172b1d] hover:bg-[#223d2b] border border-[#31573b] text-emerald-300 text-xs font-bold rounded transition flex items-center justify-center gap-2"
-              >
-                <Radio className="w-3.5 h-3.5" />
-                Відкрити диспетчер переходу
-              </button>
-            </div>
-          )}
+          <div className="w-full bg-[#0a120c] h-2 rounded-full overflow-hidden border border-[#223d29]">
+            <div
+              className="bg-amber-500 h-full transition-all duration-300"
+              style={{ width: `${transitProgress.percent}%` }}
+            />
+          </div>
         </div>
       ) : (
         <div>
