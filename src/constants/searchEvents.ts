@@ -388,7 +388,8 @@ export const SEARCH_EVENT_SCENARIOS: SearchEventScenario[] = [
 export const getSearchEventForBiome = (
   biome: string,
   sectorName: string,
-  spec: Specialization
+  spec: Specialization,
+  excludeScenarioId?: string
 ): SearchEventScenario => {
   const ctx = `${biome} ${sectorName}`.toLowerCase();
 
@@ -447,10 +448,13 @@ export const getSearchEventForBiome = (
   }
 
   const matching = SEARCH_EVENT_SCENARIOS.filter((s) => s.biome === normalizedBiome);
-  const pool = matching.length > 0 ? matching : SEARCH_EVENT_SCENARIOS;
+  const basePool = matching.length > 0 ? matching : SEARCH_EVENT_SCENARIOS;
+  const filteredPool = excludeScenarioId
+    ? basePool.filter((s) => s.id !== excludeScenarioId)
+    : basePool;
+  const pool = filteredPool.length > 0 ? filteredPool : basePool;
   const scenario = pool[Math.floor(Math.random() * pool.length)];
 
-  // Показуємо загальні варіанти + варіант, що відповідає поточній спеціалізації гравця
   const availableChoices = scenario.choices.filter(
     (c) => !c.requiredSpec || c.requiredSpec === spec
   );

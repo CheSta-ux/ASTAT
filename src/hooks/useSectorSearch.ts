@@ -55,24 +55,28 @@ export function useSectorSearch({
   const [activeSearchEvent, setActiveSearchEvent] = useState<ActiveSearchEventState | null>(null);
 
   const handleSearch = useCallback(async () => {
-    if (isUnconscious) {
+    if (isUnconscious || player.hp <= 0) {
+      setActiveSearchEvent(null);
       notify('Ви без свідомості! Пошук ресурсів неможливий.', 'danger');
       return;
     }
 
     if (expedition) {
+      setActiveSearchEvent(null);
       notify('Неможливо обшукувати сектор під час руху!', 'warn');
       return;
     }
 
     const distToCamp = calculateHaversineDistanceMeters(coords.lat, coords.lng, campCoords.lat, campCoords.lng);
     if (distToCamp < 50) {
+      setActiveSearchEvent(null);
       notify('Ви у безпечному таборі. Вийдіть у сусідні сектори для пошуку припасів.', 'info');
       return;
     }
 
     const foreignCamp = getForeignCampAt(coords.lat, coords.lng);
     if (foreignCamp) {
+      setActiveSearchEvent(null);
       notify(
         `🛡️ Це табір виживанця «${foreignCamp.ownerCallsign}». Пошук предметів на території чужої бази заблоковано!`,
         'warn'
@@ -82,14 +86,16 @@ export function useSectorSearch({
 
     const currentStatus = getSectorSearchStatus(coords.lat, coords.lng, sectorSearches);
     if (currentStatus.isDepleted) {
+      setActiveSearchEvent(null);
       notify(
-        `Цей сектор повністю виснажено! Повторний огляд через ${formatCooldownTimer(currentStatus.cooldownRemainingMs)}`,
+        `Сектор зачищено! Повторний огляд через ${formatCooldownTimer(currentStatus.cooldownRemainingMs)}`,
         'warn'
       );
       return;
     }
 
     if (player.hunger < 4) {
+      setActiveSearchEvent(null);
       notify('Занадто низька ситість для обшуку (-4% потрібно).', 'danger');
       return;
     }
@@ -121,17 +127,18 @@ export function useSectorSearch({
       terrain?.biome
     );
     const sectorBiome = terrain?.biome || currentSector.icon || currentSector.id || 'forest';
-    const scenario = getSearchEventForBiome(sectorBiome, currentSector.name, player.specialization);
+    const scenario = getSearchEventForBiome(
+      sectorBiome,
+      currentSector.name,
+      player.specialization,
+      activeSearchEvent?.scenario.id
+    );
 
     setActiveSearchEvent({
       scenario,
       sectorName: currentSector.name,
       sectorBiome
     });
-
-    if (newStatus.searchesLeft === 0) {
-      notify('Сектор зачищено! Блокування повторного огляду на 24 години.', 'warn');
-    }
   }, [
     isUnconscious,
     expedition,
@@ -142,6 +149,47 @@ export function useSectorSearch({
     player,
     setPlayer,
     syncGameState,
+    notify,
+    activeSearchEvent?.scenario.id
+  ]);
+
+  const handleContinueSearch = useCallback(async () => {
+    const currentStatus = getSectorSearchStatus(coords.lat, coords.lng, sectorSearches);
+
+    // Якщо спроби закінчились — закриваємо вікно та виводимо пуш "Сектор зачищено"
+    if (currentStatus.isDepleted || currentStatus.searchesLeft <= 0) {
+      setActiveSearchEvent(null);
+      notify(
+        `Сектор зачищено! Повторний огляд через ${formatCooldownTimer(currentStatus.cooldownRemainingMs)}.`,
+        'warn'
+      );
+      return;
+    }
+
+    // Якщо гравець втратив свідомість або в дорозі — просто закриваємо вікно
+    if (isUnconscious || player.hp <= 0 || expedition) {
+      setActiveSearchEvent(null);
+      return;
+    }
+
+    // Якщо не вистачає ситості на наступну спробу
+    if (player.hunger < 4) {
+      setActiveSearchEvent(null);
+      notify('Занадто низька ситість для наступної спроби (-4% потрібно).', 'danger');
+      return;
+    }
+
+    // Запускаємо наступну спробу обшуку
+    await handleSearch();
+  }, [
+    coords.lat,
+    coords.lng,
+    sectorSearches,
+    isUnconscious,
+    player.hp,
+    player.hunger,
+    expedition,
+    handleSearch,
     notify
   ]);
 
@@ -317,11 +365,15 @@ export function useSectorSearch({
     ]
   );
 
+  const currentSectorSearchesLeft = getSectorSearchStatus(coords.lat, coords.lng, sectorSearches).searchesLeft;
+
   return {
     sectorSearches,
     activeSearchEvent,
     setActiveSearchEvent,
+    currentSectorSearchesLeft,
     handleSearch,
-    handleResolveSearchChoice
+    handleResolveSearchChoice,
+    handleContinueSearch
   };
 }

@@ -39,7 +39,9 @@ export interface ActiveSearchEventState {
 interface SearchEventModalProps {
   eventState: ActiveSearchEventState;
   specialization: Specialization;
+  searchesLeft?: number;
   onSelectChoice: (choice: SearchEventChoice) => void;
+  onContinue?: () => void;
   onClose: () => void;
   embedded?: boolean;
 }
@@ -54,12 +56,15 @@ const SPEC_LABELS: Record<Specialization, { label: string; icon: React.ReactNode
 export const SearchEventModal: React.FC<SearchEventModalProps> = ({
   eventState,
   specialization,
+  searchesLeft,
   onSelectChoice,
+  onContinue,
   onClose,
   embedded = false
 }) => {
   const { scenario, sectorName, resolved } = eventState;
   const specMeta = SPEC_LABELS[specialization];
+  const hasMoreAttempts = typeof searchesLeft === 'number' && searchesLeft > 0;
 
   return (
     <div
@@ -234,13 +239,27 @@ export const SearchEventModal: React.FC<SearchEventModalProps> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs sm:text-sm rounded-lg transition shadow-lg active:scale-95"
-            >
-              Продовжити
-            </button>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={onContinue || onClose}
+                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs sm:text-sm rounded-lg transition shadow-lg active:scale-95"
+              >
+                {hasMoreAttempts
+                  ? `Продовжити (ще ${searchesLeft} спр.)`
+                  : 'Продовжити'}
+              </button>
+
+              {hasMoreAttempts && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full py-2 bg-[#142218] hover:bg-[#1c3022] border border-[#2b4a33] text-[#9ebda6] font-semibold text-xs rounded-lg transition active:scale-95"
+                >
+                  Завершити огляд (на карту)
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

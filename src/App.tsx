@@ -100,8 +100,10 @@ export default function App() {
     sectorSearches,
     activeSearchEvent,
     setActiveSearchEvent,
+    currentSectorSearchesLeft,
     handleSearch,
-    handleResolveSearchChoice
+    handleResolveSearchChoice,
+    handleContinueSearch
   } = useSectorSearch({
     coords,
     campCoords,
@@ -304,7 +306,9 @@ export default function App() {
         <SearchEventModal
           eventState={activeSearchEvent}
           specialization={player.specialization}
+          searchesLeft={currentSectorSearchesLeft}
           onSelectChoice={handleResolveSearchChoice}
+          onContinue={handleContinueSearch}
           onClose={() => setActiveSearchEvent(null)}
         />
       )}
