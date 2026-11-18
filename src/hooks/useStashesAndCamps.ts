@@ -35,7 +35,7 @@ export function useStashesAndCamps(notify: NotifyFn) {
           lat: Number(row.lat),
           lng: Number(row.lng),
           items: Array.isArray(row.items) ? row.items : [],
-          coins: Number(row.coins || 0),
+          coins: Number(row.microchips ?? row.coins ?? 0),
           createdAt: row.created_at,
           isLooted: Boolean(row.is_looted)
         }));
@@ -161,7 +161,7 @@ export function useStashesAndCamps(notify: NotifyFn) {
             lat,
             lng,
             items: validItems,
-            coins: Math.max(0, Math.floor(droppedCoins)),
+            microchips: Math.max(0, Math.floor(droppedCoins)),
             is_looted: false
           })
           .select()
@@ -178,7 +178,7 @@ export function useStashesAndCamps(notify: NotifyFn) {
               lat: Number(data.lat),
               lng: Number(data.lng),
               items: data.items || [],
-              coins: Number(data.coins || 0),
+              coins: Number(data.microchips ?? 0),
               createdAt: data.created_at,
               isLooted: false
             },
@@ -203,7 +203,7 @@ export function useStashesAndCamps(notify: NotifyFn) {
           .from('sector_stashes')
           .update({
             items: [],
-            coins: 0,
+            microchips: 0,
             is_looted: true
           })
           .eq('id', stash.id);
@@ -243,7 +243,6 @@ export function useStashesAndCamps(notify: NotifyFn) {
       if (!candidate) return null;
       if (Math.random() > discoveryChance) return null;
 
-      // Забираємо лише частину речей (1 слот у кількості 1–2 шт. та/або до 35% мікросхем)
       const remainingItems: InventoryItem[] = candidate.items.map((i) => ({ ...i }));
       let remainingCoins = candidate.coins;
       let takenItem: InventoryItem | undefined;
@@ -276,7 +275,7 @@ export function useStashesAndCamps(notify: NotifyFn) {
           .from('sector_stashes')
           .update({
             items: remainingItems,
-            coins: remainingCoins,
+            microchips: remainingCoins,
             is_looted: isNowEmpty
           })
           .eq('id', candidate.id);
